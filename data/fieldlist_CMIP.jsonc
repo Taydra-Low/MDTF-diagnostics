@@ -47,7 +47,13 @@
       "scalar_coord_templates": {"plev": "va{value}"},
       "ndim": 4
     },
-     "wind_speed": {
+    "volcello": {
+      "standard_name": "ocean_volume",
+      "realm": "ocean",
+      "units": "m3",
+      "ndim": 3
+    },
+    "wind_speed": {
       "standard_name": "wind_speed",
       "realm": "atmos",
       "units": "m s-1",
@@ -222,6 +228,12 @@
       "units": "Pa",
       "ndim": 3
     },
+    "volcello": {
+      "standard_name": "ocean_volume",
+      "realm": "ocean",
+      "units": "m3",
+      "ndim": 3
+    },
     "areacello": {
       "standard_name": "cell_area",
       "realm": "ocean",
@@ -355,7 +367,7 @@
       "units": "W m-2",
       "ndim": 3
     },
-    // Variables for AMOC_3D_Structure module:
+    // Variables for AMOC_3D_Structure module and natl_ocean module:
     "uo": {
       "standard_name": "sea_water_x_velocity",
       "realm": "ocean",
@@ -392,6 +404,27 @@
       "units": "degC",
       "ndim": 4
     },
+    "hfds": {
+      "standard_name": "surface_downward_heat_flux_in_sea_water",
+      "realm": "ocean",
+      "units": "W m-2",
+      "ndim": 3
+    },
+    "wfo": {
+      "standard_name": "water_flux_into_sea_water",
+      "realm": "ocean",
+      "units": "kg m-2 s-1",
+      "ndim": 3
+    },
+    "vsf": {
+      "standard_name": "virtual_salt_flux_into_sea_water",
+      "realm": "ocean",
+      "units": "kg m-2 s-1",
+      "ndim": 3
+    },
+
+
+
     // Variables for Convective Transition Diagnostics module:
     // ta: 3D temperature, units = K:
     "ta": {

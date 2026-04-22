@@ -1,0 +1,135 @@
+// Basic POD Settings
+{
+  "settings" : {
+    "description" : "North Atlantic Ocean diagnostics",
+    "driver" : "natl_driver.py",
+    "long_name" : "North Atlantic diagnostic in Subtropical to Subpolar latitudes",
+    "convention": "CMIP",
+    "runtime_requirements": {
+        "python3": ["matplotlib", "xarray"]
+    }
+  },
+
+//  "data" : {
+//    "frequency": "month",
+//    "realm": "ocean"
+//  },
+
+// Variable Coordinates
+  "dimensions" : {
+    "nlat": {
+             "standard_name": "latitude",
+             "units": "degrees_north",
+             "axis": "Y"
+           },
+    "nlon": {
+             "standard_name": "longitude",
+             "units": "degrees_east",
+             "axis": "X"
+           },
+    "lev": {
+             "standard_name": "depth",
+             "units": "centimeters",
+             "axis": "Z",
+             "positive": "down"
+            },
+    "time": {"standard_name": "time"}//,
+//    "lev_bnds": {"standard_name": "depth_bounds",
+//                 "axis": "OTHER",
+//                 "units": "None"
+ //               }
+//    "bnds": {"standard_name": "bound",
+//             "axis": "OTHER",
+//             "units": "None"  
+//             }
+  },
+
+// Variables
+  "varlist" : {
+    "tos": {
+      "frequency" : "month",
+      "realm": "ocean",
+      "dimensions": ["time", "nlat", "nlon"],
+      "standard_name" : "sea_surface_temperature",
+      "units": "degC"
+    },
+  //  "lev_bnds": {
+  //    "realm": "ocean",
+  //    "dimensions": ["lev","bnds"],
+  //    "standard_name": "depth_bounds",
+  //    "units": "m"
+  //  },
+ //   "wfo": {
+ //     "frequency" : "month",
+//      "realm": "ocean",
+//      "dimensions": ["time", "lat", "lon"],
+//      "standard_name" : "water_flux_into_sea_water",
+// //     "standard_name": "Virtual_Salt_Flux_in_FW_Flux_formulation",
+ //     "units": "kg m-2 s-1",
+//      "requirement": "optional"
+//    },
+    "vsf": {
+      "frequency" : "month",
+      "realm": "ocean",
+      "dimensions": ["time", "nlat", "nlon"],
+      "standard_name" : "virtual_salt_flux_into_sea_water",
+  //    "standard_name": "Virtual_Salt_Flux_in_FW_Flux_formulation",
+      "units": "kg m-2 s-1"
+   //   "requirement": "optional"
+    },
+    "hfds": {
+      "frequency" : "month",
+      "realm": "ocean",
+      "dimensions": ["time", "nlat", "nlon"],
+      "standard_name" : "surface_downward_heat_flux_in_sea_water",
+      "units": "W m-2"
+    },
+    "so": {
+      "frequency" : "month",
+      "realm": "ocean",
+      "dimensions": ["time", "lev", "nlat", "nlon"],
+      "standard_name" : "sea_water_salinity",
+      "units": "psu"
+    },
+    "thetao": {
+      "frequency" : "month",
+      "realm": "ocean",
+      "dimensions": ["time", "lev", "nlat", "nlon"],
+      "standard_name" : "sea_water_potential_temperature",
+      "units": "degC"
+    },
+    "volcello": {
+      "realm": "ocean",
+      "dimensions": ["lev", "nlat", "nlon"],
+      "standard_name" : "ocean_volume",
+      "units": "m3"
+    },
+//   "uo": {
+//   "frequency" : "month",
+//      "realm": "ocean",
+//      "dimensions": ["time", "lev", "lat", "lon"],
+//      "standard_name" : "sea_water_x_velocity",
+//      "units": "cm s-1"
+//    },
+//    "vo": {
+//      "frequency" : "month",
+//      "realm": "ocean",
+//      "dimensions": ["time", "lev", "lat", "lon"],
+//      "standard_name" : "sea_water_y_velocity",
+//      "units": "cm s-1"
+//    },
+    "areacello": {
+      "realm": "ocean",
+      "dimensions": ["nlat", "nlon"],
+      "standard_name" : "cell_area",
+      "units": "m2"
+    },
+    "volcello": {
+      "realm": "ocean",
+      "dimensions": ["lev", "nlat", "nlon"],
+      "standard_name" : "ocean_volume",
+      "units": "m3"
+    }
+  }
+}
+

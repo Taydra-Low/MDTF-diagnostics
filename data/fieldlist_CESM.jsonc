@@ -56,7 +56,7 @@
       "axis": "Z"
     },
     "z_t": {
-      "standard_name": "depth_from_surface_to_midpoint_of_layer",
+      "standard_name": "depth",
       "units": "centimeters",
       "positive": "down",
       "axis": "Z"
@@ -417,6 +417,43 @@
       "realm": "ocean",
       "units": "degC",
       "ndim": 4
+    },
+    // Variables for natl_ocean POD (CESM POP native names):
+    "TEMP": {
+      "standard_name": "sea_water_potential_temperature",
+      "realm": "ocean",
+      "units": "degC",
+      "ndim": 4
+    },
+    "SALT": {
+      "standard_name": "sea_water_salinity",
+      "realm": "ocean",
+      "units": "psu",
+      "ndim": 4
+    },
+    "UVEL": {
+      "standard_name": "sea_water_x_velocity",
+      "realm": "ocean",
+      "units": "cm s-1",
+      "ndim": 4
+    },
+    "VVEL": {
+      "standard_name": "sea_water_y_velocity",
+      "realm": "ocean",
+      "units": "cm s-1",
+      "ndim": 4
+    },
+    "SHF": {
+      "standard_name": "surface_downward_heat_flux_in_sea_water",
+      "realm": "ocean",
+      "units": "W m-2",
+      "ndim": 3
+    },
+    "SFWF": {
+      "standard_name": "water_flux_into_sea_water",
+      "realm": "ocean",
+      "units": "kg m-2 s-1",
+      "ndim": 3
     },
     // Variables for Convective Transition Diagnostics module:
     // ta: 3D temperature, units = K:
