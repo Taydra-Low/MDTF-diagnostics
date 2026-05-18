@@ -104,20 +104,20 @@
       "standard_name" : "ocean_volume",
       "units": "m3"
     },
-//   "uo": {
-//   "frequency" : "month",
-//      "realm": "ocean",
-//      "dimensions": ["time", "lev", "lat", "lon"],
-//      "standard_name" : "sea_water_x_velocity",
-//      "units": "cm s-1"
-//    },
-//    "vo": {
-//      "frequency" : "month",
-//      "realm": "ocean",
-//      "dimensions": ["time", "lev", "lat", "lon"],
-//      "standard_name" : "sea_water_y_velocity",
-//      "units": "cm s-1"
-//    },
+    "uo": {
+      "frequency" : "month",
+      "realm": "ocean",
+      "dimensions": ["time", "lev", "nlat", "nlon"],
+      "standard_name" : "sea_water_x_velocity",
+      "units": "m s-1"
+    },
+    "vo": {
+      "frequency" : "month",
+      "realm": "ocean",
+      "dimensions": ["time", "lev", "nlat", "nlon"],
+      "standard_name" : "sea_water_y_velocity",
+      "units": "m s-1"
+    },
     "areacello": {
       "realm": "ocean",
       "dimensions": ["nlat", "nlon"],
