@@ -963,6 +963,84 @@ def wmt_plot_byregion(ds_benchmark, ds_model, sigma_classes, save=False, savedir
 
 
 
+def wmt_amoc_plot(ds_wmt_benchmarks, ds_wmt_model, ds_moc, lat_target=45,
+                  region_name='Subpolar North Atlantic', save=False, savedir='./'):
+    """
+    Three-curve comparison vs sigma2 in the SPNA: obs WMT (mean + spread),
+    model WMT, and model AMOC at a target latitude. Mass conservation
+    implies AMOC(lat_target, sigma2) ~ -WMT integrated over SPNA(lat>lat_target)
+    in steady state, so these curves should approximately compensate.
+
+    Parameters
+    ----------
+    ds_wmt_benchmarks : xarray.Dataset
+        Observation-based WMT benchmarks (dims: benchmark, region, sigma2;
+        var: wmt). Loaded from obs_wmt_sigma2_*.nc.
+    ds_wmt_model : xarray.Dataset
+        Model WMT from POD_utils.compute_wmt (dims: region, sigma2; var: wmt,
+        units m^3/s -- divided by 1e6 here to get Sv).
+    ds_moc : xarray.Dataset
+        Model AMOC from POD_utils.calculate_moc (dims: region, sigma, lat,
+        time; var: MOC in Sv). region=1 is Atlantic+Arctic.
+    lat_target : float
+        Latitude (deg N) at which to extract the AMOC curve. Default 45.
+    region_name : str
+        WMT region label to select for both obs and model. Default
+        'Subpolar North Atlantic' (the combined SPNA total).
+    save, savedir : bool, str
+        If save=True, write the figure to savedir/wmt_amoc{lat_target}.png.
+    """
+    # Obs WMT for the selected region: mean line + min/max benchmark spread
+    region_dim = ds_wmt_benchmarks.region
+    bool_reg = region_dim == region_name
+    wmt_obs_mean = ds_wmt_benchmarks['wmt'].mean('benchmark').sel(region=bool_reg).squeeze()
+    wmt_obs_min = ds_wmt_benchmarks['wmt'].min('benchmark').sel(region=bool_reg).squeeze()
+    wmt_obs_max = ds_wmt_benchmarks['wmt'].max('benchmark').sel(region=bool_reg).squeeze()
+
+    # Model WMT for the same region; convert m^3/s -> Sv
+    wmt_model = ds_wmt_model['wmt'].sel(region=bool_reg).squeeze() / 1e6
+
+    # Model AMOC at lat_target, Atlantic+Arctic basin, time mean.
+    # .sel(method='nearest') may snap to 44.5 or 45.5 on the 1-deg grid.
+    moc_at_lat = ds_moc['MOC'].isel(region=1).sel(lat=lat_target, method='nearest').mean('time')
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    # Obs benchmark spread (gray fill) + mean (black line) -- matches wmt_plot_byregion style
+    ax.fill_between(wmt_obs_mean.sigma2, wmt_obs_min, wmt_obs_max,
+                    alpha=0.4, color='gray', label='Obs WMT benchmarks range')
+    ax.plot(wmt_obs_mean.sigma2, wmt_obs_mean, color='black', label='Obs WMT (mean)')
+
+    # Model WMT (red, same color as wmt_plot_byregion)
+    ax.plot(wmt_model.sigma2, wmt_model, color='red', label='Model WMT')
+
+    # Model AMOC at target latitude (blue). ds_moc's coord is named 'sigma' (not
+    # 'sigma2'); the values are sigma2 by construction in calculate_moc.
+    ax.plot(moc_at_lat.sigma, moc_at_lat, color='blue',
+            label=f'Model AMOC at {lat_target}$^\\circ$N')
+
+    # Limit x-axis to physical sigma2 range (the ds_moc 'sigma' coord includes
+    # a 0 anchor from sigma2_grid_96L that would otherwise compress the view).
+    sig_lo = float(wmt_obs_mean.sigma2.min())
+    sig_hi = float(wmt_obs_mean.sigma2.max())
+    ax.set_xlim(sig_lo, sig_hi)
+
+    ax.axhline(0, color='gray', alpha=0.6, linewidth=1)
+    ax.grid(color='gray', linewidth=1, linestyle='dashed', alpha=0.5)
+    ax.set_xlabel(r'$\sigma_2$ (kg/m$^3$)')
+    ax.set_ylabel('Volume flux (Sv)')
+    ax.set_title(f'{region_name}: WMT vs AMOC at {lat_target}$^\\circ$N')
+    ax.legend(loc='best')
+    plt.tight_layout()
+
+    if save:
+        plotname = f'{savedir}/wmt_amoc{lat_target}.png'
+        plt.savefig(plotname)
+
+    return fig
+
+
+
 def wmt_plot_maps(ds_benchmark, ds_model, dimnames, sigma_classes, save=False, savedir='./'):
     """
     POD plot of WMT lines by region in model versus observational benchmarks
