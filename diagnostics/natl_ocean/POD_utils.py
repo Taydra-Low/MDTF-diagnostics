@@ -9,6 +9,11 @@ import cftime
 import xwmt
 import pandas as pd
 
+# AMOC analysis: xhistogram for density-coordinate binning, cmip_basins for
+# Atlantic / Indo-Pacific / Global basin masks.
+from xhistogram.xarray import histogram
+import cmip_basins
+
 # Import Plotting Tools
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -1046,3 +1051,430 @@ def wmt_plot_maps(ds_benchmark, ds_model, dimnames, sigma_classes, save=False, s
         plt.savefig(plotname)
 
     return
+
+##### PART 4: AMOC #####
+# Adapted from Sub2Sub's moc_funcs.py (Yeager, Maroon), at
+# /glade/work/emaroon/Sub2Sub/sub2sub/moc_funcs.py. Computes the meridional
+# overturning circulation streamfunction in sigma2 (potential density referenced
+# to 2000 dbar) coordinates. Output dataset has MOC(region, sigma, lat, time)
+# in Sverdrups; region indices are 0=Global, 1=Atlantic+Arctic, 2=IndoPac+SO.
+#
+# Public entry point: calculate_moc(ds_t, ds_u, ds_v, use_currents=False)
+# - ds_t: tracer dataset, must contain thetao, so, lev, lev_bnds, time, time_bnds, lon, lat
+# - ds_u: u-component dataset, must contain either uo (use_currents=True) or umo (False)
+# - ds_v: v-component dataset, must contain either vo or vmo
+# - use_currents: True uses uo/vo (velocity, converted to mass flux via geometry);
+#                 False uses umo/vmo (mass transport, divided by reference density)
+
+# Sigma-coord name (used internally for xhistogram bin naming) and Earth radius
+# in meters (for great-circle distances).
+_AMOC_SIGNAME = 'sigma'
+_AMOC_EARTH_R = 6371e3
+
+
+def which_grid(tlon, ulon, vlon):
+    """
+    Identify Arakawa grid type from U, V, and T-point longitudes.
+    Returns a single letter: 'a' (collocated), 'b' (U==V, offset from T),
+    'c' (V==T, U offset), 'd' (U==T, V offset), or 'other'.
+    """
+    if (ulon == vlon).all() & (ulon != tlon).any(): grid = 'b'
+    elif (ulon != vlon).any() & (vlon == tlon).any(): grid = 'c'
+    elif (ulon != vlon).any() & (ulon == tlon).all(): grid = 'd'
+    elif (ulon == vlon).all() & (ulon == tlon).all(): grid = 'a'
+    else: grid = 'other'
+    return grid
+
+
+def sigma2_grid_96L():
+    """
+    Define a 156-point sigma2 grid for MOC(sigma2) binning. Returns midpoints
+    and edge points as DataArrays suitable for xhistogram.
+    Despite the function name (kept from Sub2Sub), the grid has 156 layers
+    spanning sigma2 = 26 to 38.
+    """
+    tmp1 = np.arange(26, 35, 0.2)
+    tmp2 = np.arange(35, 36, 0.1)
+    tmp3 = np.arange(36, 38.05, 0.05)
+    sig2 = np.concatenate((tmp1, tmp2, tmp3))
+    sigma_mid = xr.DataArray(
+        sig2, coords={_AMOC_SIGNAME: sig2},
+        attrs={'long_name': 'Sigma2 at middle of layer', 'units': 'kg/m^3'},
+    )
+    sigma_edge = (sigma_mid + sigma_mid.shift(sigma=1)) / 2.0
+    sigma_edge[0] = 0.0
+    sigma_edge = np.append(sigma_edge.values, [50.0])
+    sigma_edge = xr.DataArray(
+        sigma_edge, coords={_AMOC_SIGNAME: sigma_edge},
+        attrs={'long_name': 'Sigma2 at edges of layer', 'units': 'kg/m^3'},
+    )
+    return sigma_mid, sigma_edge
+
+
+def _amoc_fluxdiv_B(uflux, vflux):
+    """B-grid horizontal flux divergence. Assumes uflux=U*DY*DZ, vflux=V*DX*DZ."""
+    UTE = 0.5 * (uflux + uflux.shift(y=1))
+    UTW = UTE.roll(x=1, roll_coords=False)
+    VTN = 0.5 * (vflux + vflux.roll(x=1, roll_coords=False))
+    VTS = VTN.shift(y=1)
+    return UTE - UTW + VTN - VTS
+
+
+def _amoc_fluxdiv_C(uflux, vflux):
+    """C-grid horizontal flux divergence."""
+    UTE = uflux
+    UTW = UTE.roll(x=1, roll_coords=False)
+    VTN = vflux
+    VTS = VTN.shift(y=1)
+    return UTE - UTW + VTN - VTS
+
+
+def wflux_div(grid, uflux, vflux, densdim, densedges):
+    """
+    Vertical volume flux in density-space at T-point, derived from horizontal
+    u/v fluxes by computing convergence (= -divergence) and integrating from
+    the ocean bottom upward.
+
+    Parameters
+    ----------
+    grid : str
+        Arakawa grid type ('a', 'b', or 'c').
+    uflux, vflux : xarray.DataArray
+        Horizontal volume fluxes in density coordinates (m^3/s).
+    densdim : str
+        Name of the density dimension to integrate over.
+    densedges : xarray.DataArray
+        Density-layer edge values.
+
+    Returns
+    -------
+    xarray.DataArray
+        Vertical volume flux (m^3/s) at T-point, on the same density edges.
+    """
+    # Convergence on the chosen grid type
+    if grid == 'b':
+        dwflux = -_amoc_fluxdiv_B(uflux, vflux)
+    else:
+        dwflux = -_amoc_fluxdiv_C(uflux, vflux)
+
+    # Bottom-up vertical (density) integral to recover W
+    kwargs = {densdim: slice(None, None, -1)}
+    wflux = dwflux.sel(kwargs).cumsum(densdim).sel(kwargs)
+
+    kwargs = {densdim: slice(0, -1)}
+    wflux['sigma'] = densedges.isel(kwargs)
+    return wflux
+
+
+def latitude_grid_1deg():
+    """1° latitude grid for MOC output. Returns (mid, edge) DataArrays."""
+    midvals = np.arange(-89.5, 90.5, 1)
+    edgevals = np.arange(-90, 91, 1)
+    lat_mid = xr.DataArray(
+        midvals, coords={'lat': midvals},
+        attrs={'long_name': 'latitude', 'units': 'degrees_north'}, name='lat',
+    )
+    lat_edge = xr.DataArray(
+        edgevals, coords={'lat': edgevals},
+        attrs={'long_name': 'latitude', 'units': 'degrees_north'}, name='lat_edge',
+    )
+    return lat_mid, lat_edge
+
+
+# Cached at import time — used as the default output grid for calculate_moc
+_AMOC_LAT_MID, _AMOC_LAT_EDGE = latitude_grid_1deg()
+
+
+def basinmask(da, lon_name='lon', lat_name='lat'):
+    """
+    Build ocean-basin masks (Global, Atlantic+Arctic, Indo-Pacific+SO) from
+    cmip_basins.basins. Returns a region-dimensioned DataArray of 0/1 masks.
+    """
+    grid = xr.Dataset()
+    if len(da[lon_name].shape) == 1:
+        xx, yy = np.meshgrid(da[lon_name], da[lat_name])
+        grid.coords['lon'] = xr.DataArray(xx, dims=['y', 'x'], name='lon')
+        grid.coords['lat'] = xr.DataArray(yy, dims=['y', 'x'], name='lat')
+    else:
+        grid.coords['lon'] = da[lon_name]
+        grid.coords['lat'] = da[lat_name]
+
+    codes = cmip_basins.basins.generate_basin_codes(
+        grid, lon='lon', lat='lat', persian=False, style='cmip6',
+    )
+
+    global_codes = np.arange(11).tolist()
+    atl_codes = [2, 4, 6, 7, 8, 9]
+    indopac_codes = [1, 3, 5, 10]
+    atl_mask = xr.concat([xr.where(codes == aa, 1, 0) for aa in atl_codes], dim='dummy').sum('dummy')
+    indopac_mask = xr.concat([xr.where(codes == ii, 1, 0) for ii in indopac_codes], dim='dummy').sum('dummy')
+    global_mask = xr.concat([xr.where(codes == ii, 1, 0) for ii in global_codes], dim='dummy').sum('dummy')
+
+    mask = xr.concat([global_mask, atl_mask, indopac_mask], dim='region')
+    mask.attrs['legend'] = {0: 'Global', 1: 'Atlantic+Arctic', 2: 'IndoPac+SO'}
+    return mask
+
+
+def wflux_zonal_sum(wflux, tlat, regionmask, lat, lat_bin_name='lat_t_bin'):
+    """
+    Zonally integrate w-flux per basin using xhistogram binning by latitude.
+
+    Parameters
+    ----------
+    wflux : xarray.DataArray
+        Vertical volume flux (m^3/s).
+    tlat : xarray.DataArray
+        T-grid latitude (2D).
+    regionmask : xarray.DataArray
+        Per-region 0/1 masks (region dim).
+    lat : xarray.DataArray
+        Target latitude bins (mid-points).
+    lat_bin_name : str
+        Name xhistogram assigns to the binned latitude axis.
+
+    Returns
+    -------
+    xarray.DataArray
+        Zonally-integrated wflux per region on the target lat grid.
+    """
+    wgts = (wflux * regionmask).astype('float32')
+    xr_out = histogram(tlat, bins=[lat.data], weights=wgts, dim=['y', 'x'], density=False)
+
+    # Zero at southern edge to prepare for meridional integral
+    xr_out[{lat_bin_name: 0}] = 0
+    xr_out = xr_out.rename({lat_bin_name: lat.name})
+    xr_out = xr_out.assign_coords({_AMOC_SIGNAME: wflux[_AMOC_SIGNAME]})
+    xr_out[lat.name] = lat[1:]
+    return xr_out
+
+
+def compute_MOC(wflux, tlat, regionmask, lat, lat_bin_name='lat_bin'):
+    """
+    W-method MOC: zonally sum wflux per basin (xhistogram by latitude), then
+    cumulatively sum meridionally from south to north. Result in Sverdrups.
+    """
+    zonsum = wflux_zonal_sum(wflux, tlat, regionmask, lat, lat_bin_name=lat_bin_name)
+    moc = zonsum.cumsum(dim=lat.name) / 1.0e6
+    moc = moc.assign_attrs({'long_name': 'Meridional Overturning Circulation', 'units': 'Sv'})
+    moc.name = 'MOC'
+    return moc
+
+
+def _amoc_hav(x):
+    """Haversine helper: sin(x/2)^2."""
+    return np.sin(x / 2) ** 2
+
+
+def _amoc_archav(x):
+    """Inverse-haversine helper: 2*arcsin(sqrt(x))."""
+    return 2 * np.arcsin(np.sqrt(x))
+
+
+def great_circ_dist2(lat, lon, dimname):
+    """
+    Haversine great-circle distance between adjacent grid points in dimname
+    ('x' uses roll, 'y' uses shift since the y boundaries don't wrap).
+    Returns distance in meters; NaNs out where lat is unphysical (>1e30).
+    """
+    if dimname == 'x':
+        dlat = (lat - lat.roll(x=1)) * np.pi / 180
+        dlon = (lon - lon.roll({dimname: 1})) * np.pi / 180
+        inside = _amoc_archav(
+            _amoc_hav(dlat)
+            + (1 - _amoc_hav(dlat) - _amoc_hav((lat.roll(x=1) + lat) * np.pi / 180))
+            * _amoc_hav(dlon)
+        )
+    elif dimname == 'y':
+        dlat = (lat - lat.shift({dimname: 1})) * np.pi / 180
+        dlon = (lon - lon.shift({dimname: 1})) * np.pi / 180
+        inside = _amoc_archav(
+            _amoc_hav(dlat)
+            + (1 - _amoc_hav(dlat) - _amoc_hav((lat.shift({dimname: 1}) + lat) * np.pi / 180))
+            * _amoc_hav(dlon)
+        )
+        # First column has no left neighbor — copy from second column to avoid NaN
+        inside.values[:, 0] = inside.values[:, 1]
+    else:
+        raise ValueError(f"great_circ_dist2: dimname must be 'x' or 'y', got {dimname!r}")
+
+    dsig = inside.where(lat < 1e30)
+    return _AMOC_EARTH_R * dsig
+
+
+def calculate_moc(ds_t, ds_u, ds_v, use_currents=False):
+    """
+    Compute the meridional overturning circulation streamfunction in sigma2
+    coordinates from three input datasets.
+
+    Parameters
+    ----------
+    ds_t : xarray.Dataset
+        Tracer dataset containing thetao, so, lev, lev_bnds, time, time_bnds,
+        lon, lat. Must already be on y/x dim names with lev in meters
+        (run POD_utils.preprocess_coords first).
+    ds_u, ds_v : xarray.Dataset
+        Velocity datasets. If use_currents=True, each must contain uo / vo
+        (m/s). If use_currents=False, must contain umo / vmo (kg/s).
+    use_currents : bool
+        True  -> velocity path (uo, vo + grid geometry -> volume flux)
+        False -> mass-transport path (umo, vmo / 1028 kg/m^3 -> volume flux)
+
+    Returns
+    -------
+    xarray.Dataset
+        Contains 'MOC' (region, sigma, lat, time) in Sverdrups, plus
+        'time_bnds'. region=0 Global, 1=Atlantic+Arctic, 2=IndoPac+SO.
+    """
+    # Drop conflicting x/y scalar coords if present (preprocess_coords leftovers)
+    for coord in ('x', 'y'):
+        if coord in ds_t.coords: ds_t = ds_t.drop_vars(coord)
+        if coord in ds_u.coords: ds_u = ds_u.drop_vars(coord)
+        if coord in ds_v.coords: ds_v = ds_v.drop_vars(coord)
+
+    sigma_mid, sigma_edge = sigma2_grid_96L()
+
+    tlon, tlat = ds_t['lon'], ds_t['lat']
+    ulon, ulat = ds_u['lon'], ds_u['lat']
+    vlon, vlat = ds_v['lon'], ds_v['lat']
+
+    # Some models have uneven y-lengths between t/u/v — clip to common min
+    if len(ulon) != len(tlon) or len(ulon) != len(vlon):
+        min_len = min([len(tlon), len(ulon), len(vlon)])
+        print(f'AMOC: uneven y-dim — clipping to min_len={min_len}')
+        ds_t = ds_t.isel(y=slice(0, min_len))
+        ds_u = ds_u.isel(y=slice(0, min_len))
+        ds_v = ds_v.isel(y=slice(0, min_len))
+        tlon, tlat = ds_t['lon'], ds_t['lat']
+        ulon, ulat = ds_u['lon'], ds_u['lat']
+        vlon, vlat = ds_v['lon'], ds_v['lat']
+
+    grid = which_grid(tlon.values, ulon.values, vlon.values)
+    print(f'AMOC: detected {grid!r}-grid')
+
+    # Layer thickness from lev_bnds (m)
+    #dz_t = ds_t['lev_bnds'].diff('bnds').isel(bnds=0)
+    dz_t = ds_t.dz
+
+    # Sigma2 from thetao, so via gsw (referenced to 2000 dbar via gsw.sigma2)
+    thetao = ds_t['thetao']
+    so = ds_t['so']
+    lev = ds_t['lev']
+    p = gsw.p_from_z(-1 * lev, tlat, geo_strf_dyn_height=0, sea_surface_geopotential=0)
+    SA = gsw.SA_from_SP(so, p, tlon, tlat)
+    CT = gsw.CT_from_pt(SA, thetao)
+    sigma2_temp = gsw.sigma2(SA, CT)
+    sigma2_temp = sigma2_temp.to_dataset(name=_AMOC_SIGNAME)[_AMOC_SIGNAME]
+    sigma2_T = sigma2_temp.assign_attrs(
+        {'long_name': 'Sigma referenced to 2000dbar', 'units': 'kg/m^3'}
+    )
+
+    # Bin layer thicknesses in sigma2 (gives "isopycnal thickness" — not used
+    # downstream but matches the source; harmless dask graph node)
+    iso_thick = histogram(
+        sigma2_T, bins=[sigma_edge.values], weights=dz_t, dim=['lev'], density=False,
+    )
+    iso_thick = iso_thick.to_dataset(name=_AMOC_SIGNAME)[_AMOC_SIGNAME].rename(
+        {_AMOC_SIGNAME + '_bin': _AMOC_SIGNAME}
+    )
+    iso_thick = iso_thick.assign_coords({_AMOC_SIGNAME: sigma_mid})
+
+    # Build the horizontal volume fluxes u_e, v_e on the chosen grid type
+    if use_currents:
+        # Velocity path: u_e = uo * dyu * dz, v_e = vo * dxv * dz (or dxu for b-grid)
+        lat_u, lon_u = ds_u['lat'], ds_u['lon']
+        lat_v, lon_v = ds_v['lat'], ds_v['lon']
+        if len(lat_u.shape) == 1:
+            lon_u = lon_u.expand_dims(dim={'y': len(lat_u.y)})
+            lat_u = lat_u.expand_dims(dim={'x': len(lon_u.x)})
+
+        if grid in ('b', 'a'):
+            htn = great_circ_dist2(lat_u, lon_u, 'x')   # x-spacing between U-centers
+            hte = great_circ_dist2(lat_u, lon_u, 'y')   # y-spacing between U-centers
+            dxu = (htn + htn.roll(x=-1)) / 2            # U-point centered dx
+            dyu = (hte + hte.roll(y=-1)) / 2            # U-point centered dy
+            u_e = ds_u['uo'] * dyu * dz_t
+            v_e = ds_v['vo'] * dxu * dz_t
+        elif grid == 'c':
+            hte = great_circ_dist2(lat_u, lon_u, 'y')
+            dyu = (hte + hte.roll(y=-1)) / 2
+            htn = great_circ_dist2(lat_v, lon_v, 'x')
+            dxv = (htn + htn.roll(x=-1)) / 2
+            u_e = ds_u['uo'] * dyu * dz_t
+            v_e = ds_v['vo'] * dxv * dz_t
+        else:
+            raise ValueError(f"AMOC: unsupported grid type for velocity path: {grid!r}")
+    else:
+        # Mass-transport path: divide by reference density to get volume flux
+        ref_den = 1028
+        u_e = ds_u['umo'] / ref_den
+        v_e = ds_v['vmo'] / ref_den
+
+    u_e = u_e.where(u_e < 1.0e30).fillna(0.0)
+    v_e = v_e.where(v_e < 1.0e30).fillna(0.0)
+
+    # Interpolate b- or a-grid fluxes onto c-grid (wflux_div is c-grid)
+    if grid == 'b':
+        u_e = 0.5 * (u_e + u_e.shift(y=1))
+        v_e = 0.5 * (v_e + v_e.roll(x=1, roll_coords=False))
+    elif grid == 'a':
+        u_e = 0.5 * (u_e + u_e.roll(x=1, roll_coords=False))
+        v_e = 0.5 * (v_e + v_e.shift(y=1))
+        # Align lev to sigma2_T's lev (a-grid uses different staggering)
+        u_e = u_e.interp(lev=sigma2_T.lev)
+        v_e = v_e.interp(lev=sigma2_T.lev)
+
+    # Bin u/v fluxes into sigma2 bins
+    iso_uflux_temp = histogram(
+        sigma2_T, bins=[sigma_edge.values], weights=u_e, dim=['lev'], density=False,
+    )
+    iso_uflux = iso_uflux_temp.to_dataset(name='iso_uflux').rename(
+        {_AMOC_SIGNAME + '_bin': _AMOC_SIGNAME}
+    ).assign_coords({_AMOC_SIGNAME: sigma_mid})
+
+    iso_vflux_temp = histogram(
+        sigma2_T, bins=[sigma_edge.values], weights=v_e, dim=['lev'], density=False,
+    )
+    iso_vflux = iso_vflux_temp.to_dataset(name='iso_vflux').rename(
+        {_AMOC_SIGNAME + '_bin': _AMOC_SIGNAME}
+    ).assign_coords({_AMOC_SIGNAME: sigma_mid})
+
+    # Convergence to get vertical volume flux in sigma space (using c-grid
+    # formulation since all fluxes have been mapped to c-grid above)
+    wflux = wflux_div('c', iso_uflux['iso_uflux'], iso_vflux['iso_vflux'],
+                      _AMOC_SIGNAME, sigma_edge)
+
+    # Basin masks (Atlantic, IndoPac, Global) at first timestep
+    rmaskmoc = basinmask(so.isel(time=0))
+
+    # Cumulative meridional integration of zonally-summed wflux per basin
+    moc = compute_MOC(wflux, tlat, rmaskmoc, _AMOC_LAT_MID)
+
+    # Atlantic southern-boundary correction: find southernmost Atlantic
+    # y-index, take vflux contribution south of there, integrate top-down in
+    # sigma, divide by 1e6 to get Sv. Add to Atlantic MOC.
+    tmp = rmaskmoc.isel(region=1).sum('x')
+    atl_j = 0
+    j = 0
+    while atl_j == 0:
+        if tmp.isel(y=j).data > 0:
+            atl_j = j
+        j += 1
+    atl_j = atl_j - 1
+
+    tmp = iso_vflux['iso_vflux'] * (rmaskmoc.shift(y=-1))
+    tmp = tmp.chunk({'y': 1})  # deliberate chunk for high-res speed
+    tmp = tmp.isel(y=atl_j, region=1).sum('x')
+    moc_s = -tmp.sortby('sigma', ascending=False).cumsum('sigma').sortby('sigma', ascending=True) / 1.0e6
+    moc_s['sigma'] = sigma_edge.isel({_AMOC_SIGNAME: slice(0, -1)})
+
+    atlantic_moc = moc.isel(region=1) + moc_s
+    moc = xr.concat(
+        [moc.isel(region=0), atlantic_moc, moc.isel(region=2)], dim='region',
+    )
+
+    # Package output: MOC plus time_bnds from the input
+    moc_ds = moc.to_dataset(name='MOC')
+    moc_ds = moc_ds.assign_coords({'time': sigma2_T['time']})
+    moc_ds['time_bnds'] = ds_t['time_bnds']
+    moc_ds = moc_ds.chunk(None)
+    return moc_ds
