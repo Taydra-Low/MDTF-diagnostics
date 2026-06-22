@@ -403,11 +403,23 @@ ds_target = POD_utils.preprocess_coords(ds_target)
 
 **Catalog**: GFDL_timeslice_ocean_monthly_001.json
 
-**Variables**: thetao, so, uo, vo, hfds, vsf
+**Variables** (catalog `variable_id` → native POP name): thetao→TEMP, so→SALT, uo→UVEL,
+vo→VVEL, hfds→QFLUX, vsf→SFWF. The files store the *native POP* variable names; the catalog
+indexes them under CMIP `variable_id` so the same queries work, but the loaded datasets carry
+POP variable/coordinate names.
 
-**Format**: Aggregated monthly files (1 file per variable)
+**Format**: Aggregated monthly files (1 file per variable), 1995–2015 (240 months)
 
-**Resolution**: 1.0° regular grid (regridded from native GFDL model)
+**Resolution**: Native CESM/POP gx1 displaced-pole grid (384×320, `grid_label=gn`); depth
+`z_t` in **centimeters**; horizontal coords `TLONG/TLAT` (T-grid) and `ULONG/ULAT` (U-grid).
+This is *not* a regridded 1° product.
+
+> **Status note**: The GFDL catalog opens and resolves all six variables, and selecting
+> `data_source = 'gfdl_timeslice'` loads them. However, because the data are raw POP output,
+> the GFDL branch still needs a harmonization step before the full diagnostic pipeline
+> (σ₀/MLD/zavg/WMT/AMOC) will run: rename data vars to CMIP names, rename `z_t→lev`,
+> `TLONG/TLAT→lon/lat`, and construct `lev_bnds` from `z_t`. End-to-end GFDL validation is
+> pending. The CESM2 path is fully validated.
 
 ---
 
