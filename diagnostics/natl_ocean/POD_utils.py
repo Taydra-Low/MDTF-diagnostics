@@ -1037,7 +1037,7 @@ def wmt_amoc_plot(ds_wmt_benchmarks, ds_wmt_model, ds_moc, lat_target=45,
         plotname = f'{savedir}/wmt_amoc{lat_target}.png'
         plt.savefig(plotname)
 
-    return fig
+    return
 
 
 
@@ -1095,7 +1095,7 @@ def wmt_plot_maps(ds_benchmark, ds_model, dimnames, sigma_classes, save=False, s
     sigma2_mask_ben = ds_benchmark['wmt_freq'].mean('benchmark')     
     sigma2_mask_mod = xr.where(np.abs(ds_model)<1e-11, 0, 1)
 
-    f=plt.figure(figsize=(12,2.25*nsigma))
+    f=plt.figure(figsize=(16,2.25*nsigma))
     #loop through density classes of interest
     for ii,ss in enumerate(sigma_classes):
         #obs outcrop frequency
@@ -1553,6 +1553,6 @@ def calculate_moc(ds_t, ds_u, ds_v, use_currents=False):
     # Package output: MOC plus time_bnds from the input
     moc_ds = moc.to_dataset(name='MOC')
     moc_ds = moc_ds.assign_coords({'time': sigma2_T['time']})
-    moc_ds['time_bnds'] = ds_t['time_bnds']
+   # moc_ds['time_bnds'] = ds_t['time_bnds']
     moc_ds = moc_ds.chunk(None)
     return moc_ds
