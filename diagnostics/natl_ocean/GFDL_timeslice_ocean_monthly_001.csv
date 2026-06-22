@@ -1,0 +1,7 @@
+activity_id,institution_id,source_id,experiment_id,frequency,realm,variable_id,gfdl_variable_name,member_id,table_id,grid_label,time_range,path,version
+TIMESLICE,GFDL,CESM-mdtfv3,timeslice,mon,ocean,hfds,QFLUX,r1i1p1f1,Omon,1deg,Unknown,/glade/campaign/cgd/amp/bundy/mdtf/cesm_mdtfv3_timeslice_public/ocn/mon/cesm_mdtfv3_timeslice.QFLUX.mon.nc,20221201
+TIMESLICE,GFDL,CESM-mdtfv3,timeslice,mon,ocean,so,SALT,r1i1p1f1,Omon,1deg,Unknown,/glade/campaign/cgd/amp/bundy/mdtf/cesm_mdtfv3_timeslice_public/ocn/mon/cesm_mdtfv3_timeslice.SALT.mon.nc,20221201
+TIMESLICE,GFDL,CESM-mdtfv3,timeslice,mon,ocean,vsf,SFWF,r1i1p1f1,Omon,1deg,Unknown,/glade/campaign/cgd/amp/bundy/mdtf/cesm_mdtfv3_timeslice_public/ocn/mon/cesm_mdtfv3_timeslice.SFWF.mon.nc,20221201
+TIMESLICE,GFDL,CESM-mdtfv3,timeslice,mon,ocean,thetao,TEMP,r1i1p1f1,Omon,1deg,Unknown,/glade/campaign/cgd/amp/bundy/mdtf/cesm_mdtfv3_timeslice_public/ocn/mon/cesm_mdtfv3_timeslice.TEMP.mon.nc,20221201
+TIMESLICE,GFDL,CESM-mdtfv3,timeslice,mon,ocean,uo,UVEL,r1i1p1f1,Omon,1deg,Unknown,/glade/campaign/cgd/amp/bundy/mdtf/cesm_mdtfv3_timeslice_public/ocn/mon/cesm_mdtfv3_timeslice.UVEL.mon.nc,20221201
+TIMESLICE,GFDL,CESM-mdtfv3,timeslice,mon,ocean,vo,VVEL,r1i1p1f1,Omon,1deg,Unknown,/glade/campaign/cgd/amp/bundy/mdtf/cesm_mdtfv3_timeslice_public/ocn/mon/cesm_mdtfv3_timeslice.VVEL.mon.nc,20221201

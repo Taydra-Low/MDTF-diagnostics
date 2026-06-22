@@ -1,0 +1,23 @@
+{
+  "esmlab_version": "2022.11.20",
+  "description": "GFDL timeslice ocean monthly data for MDTF natl_ocean POD",
+  "aggregation_control": {
+    "variable_column_name": "variable_id",
+    "groupby_attrs": [
+      "source_id",
+      "realm",
+      "frequency",
+      "variable_id"
+    ],
+    "aggregations": [
+      {
+        "type": "union",
+        "attribute_name": "variable_id",
+        "options": {}
+      }
+    ]
+  },
+  "assets": {
+    "csv": "GFDL_timeslice_ocean_monthly_001.csv"
+  }
+}
