@@ -59,23 +59,25 @@
   //    "standard_name": "depth_bounds",
   //    "units": "m"
   //  },
- //   "wfo": {
- //     "frequency" : "month",
-//      "realm": "ocean",
-//      "dimensions": ["time", "lat", "lon"],
-//      "standard_name" : "water_flux_into_sea_water",
-// //     "standard_name": "Virtual_Salt_Flux_in_FW_Flux_formulation",
- //     "units": "kg m-2 s-1",
-//      "requirement": "optional"
-//    },
+    // Surface freshwater forcing: most CMIP models provide wfo (freshwater
+    // flux); CESM provides vsf (virtual salt flux, converted to wfo at runtime).
+    // Both are optional so a model that has only one still loads; at least one
+    // is required for the WMT diagnostic. When both are present, wfo is used.
+    "wfo": {
+      "frequency" : "month",
+      "realm": "ocean",
+      "dimensions": ["time", "nlat", "nlon"],
+      "standard_name" : "water_flux_into_sea_water",
+      "units": "kg m-2 s-1",
+      "requirement": "optional"
+    },
     "vsf": {
       "frequency" : "month",
       "realm": "ocean",
       "dimensions": ["time", "nlat", "nlon"],
       "standard_name" : "virtual_salt_flux_into_sea_water",
-  //    "standard_name": "Virtual_Salt_Flux_in_FW_Flux_formulation",
-      "units": "kg m-2 s-1"
-   //   "requirement": "optional"
+      "units": "kg m-2 s-1",
+      "requirement": "optional"
     },
     "hfds": {
       "frequency" : "month",

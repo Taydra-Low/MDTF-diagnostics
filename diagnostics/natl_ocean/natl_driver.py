@@ -303,11 +303,11 @@ dsigma = 0.1 #bin size for WMT
 
 # PERFORM MODEL CALCULATIONS -------------------------------------------------------
 #summed over region
-ds_wmt_lines = POD_utils.compute_wmt(ds_target, 'WMT', 'sigma2', dsigma,  regrid=False) 
+ds_wmt_lines = POD_utils.compute_wmt(ds_target, 'WMT', 'sigma2', dsigma)
 ds_wmt_lines = ds_wmt_lines.mean(time_coord)
 
 #maps of transformation at specified water classes
-ds_wmt_maps = POD_utils.compute_wmt(ds_target, 'MAPS', 'sigma2', dsigma, dclasses=sigma_classes, regrid=False)
+ds_wmt_maps = POD_utils.compute_wmt(ds_target, 'MAPS', 'sigma2', dsigma, dclasses=sigma_classes)
 
 # CREATE PLOTS ---------------------------------------------------------------------
 # WMT BY REGION

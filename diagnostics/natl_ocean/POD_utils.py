@@ -223,9 +223,14 @@ def compute_zavg(ds, var, dz, depth=200):
         print(f"Warning: No valid levels found for depth={depth}m in variable '{var}'")
         return ds
 
-    # Slice the variable and weights to these levels
+    # Slice the variable and weights to these levels. dz is derived from the fx
+    # grid (volcello/areacello) while the tracer field comes from the ESNB-loaded
+    # monthly grid; their lev coords can differ by float-rounding even after the
+    # cm->m conversion, which breaks label-based dz.sel. Select dz by nearest
+    # level, then force its lev coord to the data's so the weighted mean aligns.
     data = ds[var].sel(lev=valid_levs)
-    dz_sel = dz.sel(lev=valid_levs)
+    dz_sel = dz.sel(lev=valid_levs, method='nearest')
+    dz_sel = dz_sel.assign_coords(lev=data['lev'])
     dz_sel = dz_sel.rename({'nlat': 'y', 'nlon': 'x'})
 
     # Do the weighted mean
@@ -643,10 +648,10 @@ def ScatterPlot_Error(ds_x, var_x, ds_y, var_y, focus_model, save=False, savedir
 #### PART 3 CALCULATION
 
 
-def compute_wmt(ds, calc_type, density, dsigma, dclasses=np.empty(0), regrid=False, verbose=True):
+def compute_wmt(ds, calc_type, density, dsigma, dclasses=np.empty(0), verbose=True):
     """
-    Computes water mass transformation in the subpolar North Atlantic and optionally regrids to 1x1 grid.
-     
+    Computes water mass transformation in the subpolar North Atlantic.
+
     Parameters:
     ds: xarray.Dataset
          Dataset with fields necessary for WMT calculation (TEMP, SALT, WFO/VSF, HFDS)
@@ -663,8 +668,6 @@ def compute_wmt(ds, calc_type, density, dsigma, dclasses=np.empty(0), regrid=Fal
          width of sigma bins
     dclasses: numpy array, optional
          array with water mass values to use for WMT calculations
-    regrid: boolean, optional
-         Regrids to regular 1x1 grid 
     verbose: boolean, optional
 
     Returns:
@@ -680,13 +683,6 @@ def compute_wmt(ds, calc_type, density, dsigma, dclasses=np.empty(0), regrid=Fal
     if calc_type == 'DS':
         ds_wmt = make_ds(ds)
 
-    if regrid:
-        dlon=1
-        dlat=1
-        method ='bilinear'
-        target = xe.util.grid_global(dlon, dlat, cf=True, lon1=360)
-        ds_wmt = utils.regrid(ds_wmt, target=target, method=method)
-  
     return ds_wmt
 
 
@@ -742,10 +738,30 @@ def wmt_preproc(ds):
         Dataset with fields ready for xwmt processing
 
     """
+    # Surface freshwater (mass) flux for xwmt. CESM provides a virtual salt flux
+    # (vsf); most other models provide wfo directly. Prefer wfo when present;
+    # otherwise convert vsf. (When both exist, the upstream loader passes only
+    # wfo, but the same preference is enforced here too.)
     if 'wfo' in ds:
-        ds['wfo'] = ds['wfo']*-1
+        # CMIP `wfo` (water_flux_into_sea_water) is positive INTO the ocean,
+        # which is exactly the convention xwmt expects (it forms the salt forcing
+        # as -wfo*sos), so it is used as-is. This matches the sign of the vsf->wfo
+        # conversion below (vsf>0 = salt in -> wfo<0 = freshwater out). No -1
+        # flip: that would make the native-wfo path inconsistent with the vsf path.
+        pass
     elif 'vsf' in ds:
-        ds['wfo'] = ds['vsf']
+        # Virtual salt flux -> freshwater (mass) flux. xwmt expects `wfo` to be a
+        # freshwater mass flux (kg m-2 s-1), NOT a salt flux, so vsf cannot be
+        # assigned to wfo directly. FSU-style conversion from HR-LR_OSNAP_wmt
+        # (sub2sub_HR/wmt.py::_op_sf_to_fwf_from_sos):
+        #     wfo = vsf * (-1 / sos)
+        # No 1000 factor: xwmt pairs wfo with sos as a -wfo*sos salt forcing, so
+        # vsf [kg m-2 s-1] divided by sos [psu] lands in the same convention.
+        if 'sos' not in ds:
+            raise KeyError("wmt_preproc: 'sos' is required to convert 'vsf' -> 'wfo'")
+        ds['wfo'] = ds['vsf'] * (-1.0 / ds['sos'])
+    else:
+        raise KeyError("wmt_preproc: need either 'wfo' or 'vsf' to build the freshwater flux for WMT")
     ds['wet'] = xr.where(~np.isnan(ds.tos), 1, 0)
     ds['sfdsi'] = xr.zeros_like(ds['hfds']).rename('sfdsi')
     return ds
@@ -816,7 +832,7 @@ def calc_maps(ds, density, dclasses, dsigma):
     dclasses: numpy array
         User-defined values of water masses for maps  
     dsigma: float
-        Widht of sigma bins  
+        Width of sigma bins  
 
     Returns: 
     xarray.Dataset
@@ -834,17 +850,7 @@ def calc_maps(ds, density, dclasses, dsigma):
     else: 
         vals = dclasses
     xwmt_init = xwmt.swmt(ds_mask.sel(region='Subpolar North Atlantic'))
-   # wmt_maps_decomp = xwmt_init.isosurface_mean(density, val=vals,
-   #                                             ti=xwmt_init.ds.time[0],
-   #                                             tf=xwmt_init.ds.time[-1],
-   #                                             dl=dsigma,
-   #                                             group_tend=False)
-   # wmt_maps = xwmt_init.isosurface_mean(density, val=vals,
-   #                                      ti=xwmt_init.ds.time[0],
-   #                                      tf=xwmt_init.ds.time[-1],
-   #                                      dl=dsigma)
-#    wmt_maps_decomp = xwmt_init.F(density,  group_tend=False)
-
+   
     temp_array = []
     for dd in vals:
         print(dd) 
@@ -1065,9 +1071,6 @@ def wmt_plot_maps(ds_benchmark, ds_model, dimnames, sigma_classes, save=False, s
     nsigma = len(sigma_classes)
     gs=GridSpec(nsigma,2)
 
-    dmax = 0.2
-    ddel = 0.02
-
     time_coord = dimnames[0]
     lon_coord = dimnames[1]
     lat_coord = dimnames[2]
@@ -1075,10 +1078,11 @@ def wmt_plot_maps(ds_benchmark, ds_model, dimnames, sigma_classes, save=False, s
     #correct lon for North Atlantic
     model_lon = ds_model['lon'] #ok to hard-code 'lon' and 'lat' here b/c this is output from xwmt
     if model_lon.max()>345:
-        print('correcting lat for dateline')
-        lonvals = model_lon.values
-        lonvals[lonvals>180]=lonvals[lonvals>180]-360
-        model_lon.values = lonvals
+        print('correcting lon for dateline')
+        # Build a wrapped copy with xr.where instead of mutating model_lon.values
+        # in place -- the regridded lon array is read-only, so the in-place write
+        # raised "assignment destination is read-only".
+        model_lon = xr.where(model_lon>180, model_lon-360.0, model_lon)
         ds_model = ds_model.assign_coords({'lon':model_lon})
     model_lat = ds_model['lat']
 
@@ -1089,11 +1093,27 @@ def wmt_plot_maps(ds_benchmark, ds_model, dimnames, sigma_classes, save=False, s
     cmap = LinearSegmentedColormap.from_list(cmap_name, colortab.values/255, N=101)
     cmap.set_bad(color='white')
 
-    denslevs = np.concatenate((np.arange(-1*dmax,0,ddel),np.arange(ddel,dmax+ddel/2,ddel)))
+    # Shared, symmetric color limits derived from BOTH fields (99th pct of
+    # |trans.|), so the model and benchmark panels sit on the same data-driven
+    # scale instead of a range hard-tuned to the obs benchmark.
+    _mod_plot = ds_model.sel(sigma2=sigma_classes, method='nearest').mean(time_coord) / 1e6
+    _ben_plot = ds_benchmark['wmt'].sel(sigma2=sigma_classes, method='nearest').mean('benchmark') / 1e6
+    _mod_abs = np.abs(_mod_plot.values)
+    vlim = float(np.nanmax([
+        np.nanpercentile(_mod_abs, 99),
+        np.nanpercentile(np.abs(_ben_plot.values), 99),
+    ]))
+    if not np.isfinite(vlim) or vlim == 0:
+        vlim = 2e-11
 
-    benchmark_mean = ds_benchmark['wmt'].mean('benchmark')
-    sigma2_mask_ben = ds_benchmark['wmt_freq'].mean('benchmark')     
-    sigma2_mask_mod = xr.where(np.abs(ds_model)<1e-11, 0, 1)
+    sigma2_mask_ben = ds_benchmark['wmt_freq'].mean('benchmark')
+    # Model 'outcrop frequency': fraction of timesteps a cell actively transforms
+    # this class. Threshold is relative to the field's own scale -- the old 1e-11
+    # was ~1e6x too small for these ~1e-5 values, so it flagged every cell (incl.
+    # NaNs outside the SPNA) as outcropping.
+    _raw_scale = float(np.nanmax(_mod_abs)) * 1e6
+    _mod_thresh = 1e-3 * _raw_scale if (np.isfinite(_raw_scale) and _raw_scale > 0) else 0.0
+    sigma2_mask_mod = xr.where(np.abs(ds_model) > _mod_thresh, 1, 0)
 
     f=plt.figure(figsize=(16,2.25*nsigma))
     #loop through density classes of interest
@@ -1105,8 +1125,8 @@ def wmt_plot_maps(ds_benchmark, ds_model, dimnames, sigma_classes, save=False, s
 
         #model plots
         ax=plt.subplot(gs[ii,0],projection = ccrs.PlateCarree())    
-        cs2=plt.pcolormesh(model_lon, model_lat, ds_model.sel(sigma2=ss,method='nearest').mean(time_coord)/1e6, cmap=cmap, vmin=-2e-11, vmax=2e-11, transform=ccrs.PlateCarree())
-        cs=plt.contour(model_lon, model_lat, mod_outcrop, np.arange(0.1,0.31, 0.1), cmap=plt.cm.viridis, transform=ccrs.PlateCarree())
+        cs2=plt.pcolormesh(model_lon, model_lat, ds_model.sel(sigma2=ss,method='nearest').mean(time_coord)/1e6, cmap=cmap, vmin=-vlim, vmax=vlim, transform=ccrs.PlateCarree())
+    #cs=plt.contour(model_lon, model_lat, mod_outcrop, np.arange(0.1,0.31, 0.1), cmap=plt.cm.viridis, transform=ccrs.PlateCarree())
         plt.title('Model: '+'$\\sigma_{2}$='+str(ss)[0:4]+'-'+str(ss+0.1)[0:4]+' kg/m$^3$')
         plt.colorbar(cs2, label='trans. (Sv/m$^2$)')
         ax.coastlines()
@@ -1114,7 +1134,7 @@ def wmt_plot_maps(ds_benchmark, ds_model, dimnames, sigma_classes, save=False, s
     
         #benchmark plots
         ax=plt.subplot(gs[ii,1],projection = ccrs.PlateCarree())
-        cs2=plt.pcolormesh(ds_benchmark.lon, ds_benchmark.lat, ds_benchmark['wmt'].sel(sigma2=ss,method='nearest').mean('benchmark')/1e6, cmap=cmap, vmin=-2e-11, vmax=2e-11, transform=ccrs.PlateCarree())
+        cs2=plt.pcolormesh(ds_benchmark.lon, ds_benchmark.lat, ds_benchmark['wmt'].sel(sigma2=ss,method='nearest').mean('benchmark')/1e6, cmap=cmap, vmin=-vlim, vmax=vlim, transform=ccrs.PlateCarree())
         cs=plt.contour(obs_outcrop.lon, obs_outcrop.lat, obs_outcrop, np.arange(0.1,0.31, 0.1),  cmap=plt.cm.viridis, transform=ccrs.PlateCarree())
         ax.set_extent([-80,30,45,80], crs=ccrs.PlateCarree()) 
         ax.coastlines()
