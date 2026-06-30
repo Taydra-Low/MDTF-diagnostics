@@ -102,3 +102,11 @@ pip-delete-this-directory.txt
 .ipynb_checkpoints
 my_gfdl
 mdtf_slurm
+
+# natl_ocean user-guide build artifacts (generated from the .md source)
+example_notebooks/_tmp_guide.tex
+example_notebooks/*.aux
+example_notebooks/natl_ocean_notebook_user_guide.docx
+example_notebooks/natl_ocean_notebook_user_guide.html
+example_notebooks/natl_ocean_notebook_user_guide.pdf
+example_notebooks/natl_ocean_notebook_user_guide.txt
