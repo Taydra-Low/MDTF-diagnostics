@@ -105,8 +105,8 @@ with open(case_env_file, 'r') as stream:
 cat_def_file = case_info['CATALOG_FILE']
 case_list = case_info['CASE_LIST']
 model_name = list(case_list.keys())[0]
-start_year = case_list['CESM2_historical_r1i1p1f1']['startdate'].split('-')[0]
-end_year = case_list['CESM2_historical_r1i1p1f1']['enddate'].split('-')[0]
+start_year = case_list[model_name]['startdate'].split('-')[0]
+end_year = case_list[model_name]['enddate'].split('-')[0]
 
 # all cases share variable names and dimension coords in this example, so just get first result for each
 volcello_var = [case['volcello_var'] for case in case_list.values()][0]
@@ -114,6 +114,13 @@ areacello_var = [case['areacello_var'] for case in case_list.values()][0]
 temp_var = [case['thetao_var'] for case in case_list.values()][0]
 hfds_var = [case['hfds_var'] for case in case_list.values()][0]
 salt_var = [case['so_var'] for case in case_list.values()][0]
+
+# Velocity / mass-transport var names (optional; needed for AMOC, Part 2).
+# Use .get so models lacking these still run Parts 1 & 3.
+uo_var  = [case.get('uo_var')  for case in case_list.values()][0]
+vo_var  = [case.get('vo_var')  for case in case_list.values()][0]
+umo_var = [case.get('umo_var') for case in case_list.values()][0]
+vmo_var = [case.get('vmo_var') for case in case_list.values()][0]
 
 for case in case_list.values():
     if 'vsf_var' in case:
@@ -178,18 +185,12 @@ ds_target = POD_utils.preprocess_coords(ds_target)
 obsdir = os.environ["OBS_DATA"]
 # omip_dir = os.environ["OMIP_DATA"]
 
-# Open OMIP data  # TODO: this should probably just load omip above but file not ingested yet!
-#TODO - ADD THIS TO "OBS" DIR 
-omip_file = '/glade/work/brendanmy/S_Yeager/Sub2Sub/data_archive/POD_data/omip2.cycle1.1989_2018.0-200m.mld_sic_t_s_sigma.nc'
-# omip_file = omip_dir+'omip2.cycle1.1989_2018.mld_sic_t200_s200_sigma200.nc'
+# Open OMIP benchmark + obs reference from the POD obs dir (OBS_DATA env var).
+omip_file = os.path.join(obsdir, 'omip2.cycle1.1989_2018.0-200m.mld_sic_t_s_sigma.nc')
 ds_model = xr.open_dataset(omip_file).isel(OMIP=0).load()
-#ds_model = xr.open_dataset(omip_file).load()
 
-# Open Obs # TODO: this should probably just use the obsdir above but file not ingested yet!
-# TODO ADD TO OBS DIR
-obs_path = '/glade/campaign/cgd/ccr/yeager/Sub2Sub/POD_data/obs_1x1.nc'
+obs_path = os.path.join(obsdir, 'obs_1x1.nc')
 ds_obs = xr.open_dataset(obs_path).load()
-# ds_obs = xr.open_dataset(obsdir+'obs_1x1.nc').load()
 
 # Time Subselection:
 ds_target = ds_target.sel(time=slice(start_year, end_year))
@@ -232,20 +233,75 @@ POD_utils.ScatterPlot_Error(ds_t200, 'thetao_zavg_bias', ds_s200, 'so_zavg_bias'
 print('North Atlantic Ocean POD Part 1: North Atlantic Bias Assessment finished successfully!')
 
 # PART 2: AMOC IN SIGMA COORDS #####################################################
-# LOAD IN OMIP AMOC(SIGMA)
-# ds_omip_amoc = xr.open_dataset(obsdir+'amoc.nc')
+print('At Part 2: AMOC streamfunction in sigma2 coordinates')
 
-# PERFORM CALCULATIONS -----------------------------------------------------------
-# CALLING MOC FUNCTIONS FROM PY SCRIPT
+# AMOC needs velocity (uo/vo) or mass-transport (umo/vmo). These are optional in
+# the varlist, so the framework may not provide them; skip Part 2 gracefully if
+# absent so velocity-less models still complete Parts 1 & 3.
+uo_file  = os.environ.get("UO_FILE")
+vo_file  = os.environ.get("VO_FILE")
+umo_file = os.environ.get("UMO_FILE")
+vmo_file = os.environ.get("VMO_FILE")
+has_mass_transport = bool(umo_file and vmo_file)
+ds_moc = None
 
-# CREATE PLOTS -------------------------------------------------------------------
-# AMOC IN SIGMA
-# AMOC IN Z (If TIME)
-# AMOC at 45 Line Plot
+if not (has_mass_transport or (uo_file and vo_file)):
+    print('AMOC: no uo/vo or umo/vmo files provided — skipping Part 2')
+else:
+    # Tracer dataset: reopen thetao+so (Part 1 consumed ds_target), rename to the
+    # CMIP names calculate_moc expects, and run through preprocess_coords.
+    amoc_t = xr.open_dataset(os.environ["THETAO_FILE"])
+    amoc_s = xr.open_dataset(os.environ["SO_FILE"])
+    ds_t_for_amoc = xr.merge([amoc_t, amoc_s], join='outer', compat='override')
+    _tren = {}
+    if temp_var != 'thetao':
+        _tren[temp_var] = 'thetao'
+    if salt_var != 'so':
+        _tren[salt_var] = 'so'
+    if _tren:
+        ds_t_for_amoc = ds_t_for_amoc.rename(_tren)
+    ds_t_for_amoc = POD_utils.preprocess_coords(ds_t_for_amoc)
 
-# SAVE FIGS -> HTML
-# Wrap-up by closing datasets that have been opened and informing user of successful completion
-# print('North Atlantic Ocean POD Part 2: AMOC finished successfully!')
+    # Attach the FULL 3D layer thickness (lev, y, x). calculate_moc weights the
+    # velocity by dz to form a volume flux; dz is NOT horizontally constant in POP
+    # (partial bottom cells + land masking), so a single-column slice would zero
+    # out deep transport and collapse the AMOC (~3x too low). reset_coords(drop=True)
+    # strips dz's lon/lat so they don't collide with the U-grid coords on multiply;
+    # pin lev to the tracer grid to avoid float-label drift.
+    _ren = {k: v for k, v in {'nlat': 'y', 'nlon': 'x'}.items() if k in dz.dims}
+    _dz3d = dz.rename(_ren).reset_coords(drop=True)
+    _dz3d = _dz3d.assign_coords(lev=ds_t_for_amoc['lev'])
+    ds_t_for_amoc['dz'] = _dz3d
+
+    # Velocity datasets: prefer mass transport (umo/vmo) when present, else fall
+    # back to currents (uo/vo). calculate_moc switches on use_currents.
+    if has_mass_transport:
+        use_currents = False
+        _u = xr.open_dataset(umo_file)
+        _v = xr.open_dataset(vmo_file)
+        if umo_var and umo_var != 'umo':
+            _u = _u.rename({umo_var: 'umo'})
+        if vmo_var and vmo_var != 'vmo':
+            _v = _v.rename({vmo_var: 'vmo'})
+        print('AMOC: using umo/vmo (mass transport) — use_currents=False')
+    else:
+        use_currents = True
+        _u = xr.open_dataset(uo_file)
+        _v = xr.open_dataset(vo_file)
+        if uo_var and uo_var != 'uo':
+            _u = _u.rename({uo_var: 'uo'})
+        if vo_var and vo_var != 'vo':
+            _v = _v.rename({vo_var: 'vo'})
+        print('AMOC: using uo/vo (velocity) — use_currents=True')
+    ds_u_for_amoc = POD_utils.preprocess_coords(_u)
+    ds_v_for_amoc = POD_utils.preprocess_coords(_v)
+
+    # MOC(region, sigma, lat, time) in Sv. region 0=Global, 1=Atlantic+Arctic.
+    ds_moc = POD_utils.calculate_moc(
+        ds_t_for_amoc, ds_u_for_amoc, ds_v_for_amoc, use_currents=use_currents,
+    )
+    print('ds_moc dims:', dict(ds_moc.sizes))
+    print('North Atlantic Ocean POD Part 2: AMOC finished successfully!')
 
 # PART 3: SURFACE-FORCED WATER MASS TRANSFORMATION ###############################
 
@@ -316,7 +372,15 @@ POD_utils.wmt_plot_byregion(ds_wmt_benchmarks, ds_wmt_lines, sigma_classes, save
 # DENSITY FLUX MAPS AT A FEW SPECIFIED WATER MASSES
 POD_utils.wmt_plot_maps(ds_dflux_benchmarks, ds_wmt_maps, [time_coord, lon_coord, lat_coord], sigma_classes, save=True, savedir=outmod_dir)
 
-# WMT(45N+) WITH AMOC(SIGMA)
+# WMT(45N+) WITH AMOC(SIGMA) — compensation diagnostic (needs Part 2 AMOC).
+if ds_moc is not None:
+    POD_utils.wmt_amoc_plot(
+        ds_wmt_benchmarks, ds_wmt_lines, ds_moc,
+        lat_target=45, region_name='Subpolar North Atlantic',
+        save=True, savedir=outmod_dir,
+    )
+else:
+    print('WMT+AMOC compensation plot skipped — AMOC (Part 2) was not computed')
 
 # SAVE FIGS -> HTML
 print('North Atlantic Ocean POD Part 3: Surface-Forced Water Mass Transformation finished successfully!')

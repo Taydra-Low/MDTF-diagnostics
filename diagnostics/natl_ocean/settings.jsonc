@@ -34,14 +34,6 @@
              "positive": "down"
             },
     "time": {"standard_name": "time"}//,
-//    "lev_bnds": {"standard_name": "depth_bounds",
-//                 "axis": "OTHER",
-//                 "units": "None"
- //               }
-//    "bnds": {"standard_name": "bound",
-//             "axis": "OTHER",
-//             "units": "None"  
-//             }
   },
 
 // Variables
@@ -53,23 +45,18 @@
       "standard_name" : "sea_surface_temperature",
       "units": "degC"
     },
-  //  "lev_bnds": {
-  //    "realm": "ocean",
-  //    "dimensions": ["lev","bnds"],
-  //    "standard_name": "depth_bounds",
-  //    "units": "m"
-  //  },
     // Surface freshwater forcing: most CMIP models provide wfo (freshwater
     // flux); CESM provides vsf (virtual salt flux, converted to wfo at runtime).
-    // Both are optional so a model that has only one still loads; at least one
-    // is required for the WMT diagnostic. When both are present, wfo is used.
+    // wfo is the primary; vsf is its alternate (requirement "alternate"), so a
+    // model with only vsf (e.g. CESM2) still resolves. At least one is required
+    // for the WMT diagnostic; when both exist, wfo is used.
     "wfo": {
       "frequency" : "month",
       "realm": "ocean",
       "dimensions": ["time", "nlat", "nlon"],
       "standard_name" : "water_flux_into_sea_water",
       "units": "kg m-2 s-1",
-      "requirement": "optional"
+      "alternates": ["vsf"]
     },
     "vsf": {
       "frequency" : "month",
@@ -77,7 +64,7 @@
       "dimensions": ["time", "nlat", "nlon"],
       "standard_name" : "virtual_salt_flux_into_sea_water",
       "units": "kg m-2 s-1",
-      "requirement": "optional"
+      "requirement": "alternate"
     },
     "hfds": {
       "frequency" : "month",
@@ -106,47 +93,38 @@
       "standard_name" : "ocean_volume",
       "units": "m3"
     },
+    // Velocities (uo/vo) drive the AMOC diagnostic (Part 2). Optional so models
+    // without them still run Parts 1 & 3; the driver skips AMOC when absent.
     "uo": {
       "frequency" : "month",
       "realm": "ocean",
       "dimensions": ["time", "lev", "nlat", "nlon"],
       "standard_name" : "sea_water_x_velocity",
-      "units": "m s-1"
+      "units": "m s-1",
+      "requirement": "optional"
     },
     "vo": {
       "frequency" : "month",
       "realm": "ocean",
       "dimensions": ["time", "lev", "nlat", "nlon"],
       "standard_name" : "sea_water_y_velocity",
-      "units": "m s-1"
-    },
-    "umo": {
-      "frequency" : "month",
-      "realm": "ocean",
-      "dimensions": ["time", "lev", "nlat", "nlon"],
-      "standard_name" : "ocean_mass_x_transport",
-      "units": "kg s-1",
+      "units": "m s-1",
       "requirement": "optional"
     },
-    "vmo": {
-      "frequency" : "month",
-      "realm": "ocean",
-      "dimensions": ["time", "lev", "nlat", "nlon"],
-      "standard_name" : "ocean_mass_y_transport",
-      "units": "kg s-1",
-      "requirement": "optional"
-    },
+    // Mass transport (umo/vmo): the AMOC code prefers these over uo/vo when a
+    // model provides them, but CESM2 does not output them. They are intentionally
+    // NOT declared here: the framework's catalog query neither skips an unmatched
+    // "optional" var nor honors a per-primary "alternates" list (it pools all
+    // "alternate"-requirement vars), so leaving umo/vmo in the varlist breaks the
+    // wfo->vsf fallback and the velocity-only path. To run the mass-transport AMOC
+    // path on a model that outputs umo/vmo, add them back as primaries here and
+    // ensure that model's catalog contains them; the driver auto-selects umo/vmo
+    // over uo/vo when UMO_FILE/VMO_FILE are present.
     "areacello": {
       "realm": "ocean",
       "dimensions": ["nlat", "nlon"],
       "standard_name" : "cell_area",
       "units": "m2"
-    },
-    "volcello": {
-      "realm": "ocean",
-      "dimensions": ["lev", "nlat", "nlon"],
-      "standard_name" : "ocean_volume",
-      "units": "m3"
     }
   }
 }

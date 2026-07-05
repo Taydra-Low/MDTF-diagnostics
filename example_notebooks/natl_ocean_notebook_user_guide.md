@@ -10,8 +10,8 @@ framework. The notebook lives on the MDTF **notebook-development branch**
 ## Overview
 
 The North Atlantic Ocean POD (`natl_ocean`) evaluates how well a model represents the
-subtropical-to-subpolar North Atlantic ocean state, compared against a 1°×1°
-observation-based reference. It computes:
+subtropical-to-subpolar North Atlantic ocean state, compared against
+observation-based data. It computes:
 
 - Sea-surface and upper-200 m temperature/salinity climatologies and biases
 - Mixed layer depth (MLD) and potential density (σ₀)
@@ -37,8 +37,9 @@ It supports two data sources, selected by the `data_source` variable in Section 
   ssh-keygen -t ed25519 -C "your_email@example.com"   # press enter to accept defaults
   cat ~/.ssh/id_ed25519.pub                            # copy this output
   ```
+
   Then paste it at GitHub → Settings → SSH and GPG keys → New SSH key. (See the MDTF git
-  intro §6.10 for details: <https://mdtf-diagnostics.readthedocs.io/en/main/sphinx/dev_git_intro.html>.)
+  intro §6.10 for details: [https://mdtf-diagnostics.readthedocs.io/en/main/sphinx/dev_git_intro.html](https://mdtf-diagnostics.readthedocs.io/en/main/sphinx/dev_git_intro.html).)
 - **conda** (miniconda or Anaconda) on your machine.
 - Access to the input **data** — either NCAR Casper (where the data currently lives) or a
   machine you have copied the data to (see Step 3).
@@ -59,7 +60,7 @@ git checkout -b dev-notebook-transistions origin/dev-notebook-transistions
 ```
 
 **If you plan to contribute changes back**, first fork the repo on GitHub (button in the
-upper-right at <https://github.com/NOAA-GFDL/MDTF-diagnostics>), then:
+upper-right at [https://github.com/NOAA-GFDL/MDTF-diagnostics](https://github.com/NOAA-GFDL/MDTF-diagnostics)), then:
 
 ```bash
 git clone git@github.com:<your_github_account>/MDTF-diagnostics.git
@@ -94,6 +95,7 @@ python -m ipykernel install --user --name esnb --display-name "Python (esnb)"
 ```
 
 Notes:
+
 - **`xwmt==0.0.3` is pinned on purpose.** `POD_utils.calc_wmt` calls `xwmt.swmt(...)`, a class
   that only exists in xwmt 0.0.3; xwmt ≥ 0.1.0 renamed it and changed the signature.
 - The last command registers the kernel as **"Python (esnb)"**, which you select in Jupyter.
@@ -106,6 +108,7 @@ The notebook needs three sets of files. On NCAR Casper they already exist at the
 **off-NCAR users must copy them** (e.g. via Globus) and update the catalog + config paths.
 
 **a) Reference / observation data** (point `OBS_DATA` at this directory):
+
 - `obs_1x1.nc`
 - `omip2.cycle1.1989_2018.0-200m.mld_sic_t_s_sigma.nc`
 - `obs.maps_freq.sigma2.1982-2009_decomp_mean_1x1.nc`
@@ -114,6 +117,7 @@ The notebook needs three sets of files. On NCAR Casper they already exist at the
 On Casper: `/glade/work/taydral/MDTF/inputdata/obs_data/natl_ocean/`
 
 **b) Model data** — for `data_source = "CESM_timeslice"`, the native POP files:
+
 - `cesm_mdtfv3_timeslice.{TEMP,SALT,SHF,QFLUX,SFWF,UVEL,VVEL}.mon.nc`
 
 On Casper: `/glade/campaign/cgd/amp/bundy/mdtf/cesm_mdtfv3_timeslice_public/ocn/mon/`
@@ -129,6 +133,7 @@ On Casper: `/glade/collections/cmip/CMIP6/CMIP/NCAR/CESM2/historical/r1i1p1f1/Of
 
 > **TODO (endpoint not yet created):** download the data sets above from the project Globus
 > endpoint and place them in local directories of your choice.
+>
 > - Globus endpoint (model data): `TODO: <endpoint name / UUID>`
 > - Globus endpoint (obs / reference data): `TODO: <endpoint name / UUID>`
 > - Globus endpoint (fx data): `TODO: <endpoint name / UUID>`
@@ -136,6 +141,7 @@ On Casper: `/glade/collections/cmip/CMIP6/CMIP/NCAR/CESM2/historical/r1i1p1f1/Of
 ### Updating catalog paths (off-NCAR)
 
 The catalog files in `diagnostics/natl_ocean/` store **absolute** paths:
+
 - the `path` column in `CESM_timeslice_ocean_monthly_001.csv` (and `CMIP_CESM_historical_001.csv`)
 - the `catalog_file` field in the matching `.json`
 
@@ -151,12 +157,12 @@ All site-specific paths live in one **USER CONFIGURATION** cell near the top of 
 (Section 1). Edit the `CHANGE ME` lines, or export the same variables in your shell before
 launching Jupyter (the cell uses `setdefault`, so exported values win):
 
-| Variable      | What to set it to |
-|---------------|-------------------|
-| `CODE_ROOT`   | your `MDTF-diagnostics` repo directory |
-| `WORK_DIR`    | output / work directory (created if missing) |
-| `OBS_DATA`    | the reference/obs directory from Step 3a |
-| `FX_DIR`      | the fx directory from Step 3c |
+| Variable        | What to set it to                                           |
+| --------------- | ----------------------------------------------------------- |
+| `CODE_ROOT`   | your`MDTF-diagnostics` repo directory                     |
+| `WORK_DIR`    | output / work directory (created if missing)                |
+| `OBS_DATA`    | the reference/obs directory from Step 3a                    |
+| `FX_DIR`      | the fx directory from Step 3c                               |
 | `PBS_ACCOUNT` | your PBS account (only used if you enable the dask cluster) |
 
 ---
@@ -164,7 +170,7 @@ launching Jupyter (the cell uses `setdefault`, so exported values win):
 ## Step 5 — Launch and run
 
 1. Start Jupyter:
-   - **On Casper**: use JupyterHub (<https://jupyterhub.hpc.ucar.edu>) or a `qvscode`
+   - **On Casper**: use JupyterHub ([https://jupyterhub.hpc.ucar.edu](https://jupyterhub.hpc.ucar.edu)) or a `qvscode`
      interactive session; a 1-year run is small enough to run single-process (no dask).
    - **Locally**: `conda activate esnb && jupyter lab`
 2. Open `example_notebooks/mdtf.natl_ocean.esnb.ipynb` and select the **`Python (esnb)`**
@@ -183,6 +189,7 @@ fallbacks) are documented in
 `diagnostics/natl_ocean/notes/2026-06-29_session_notes.md`.
 
 Common issues:
+
 - **Kernel "Python (esnb)" not listed** — re-run the `ipykernel install` line from Step 2.
 - **`ModuleNotFoundError` / `xwmt.swmt` missing** — confirm `xwmt==0.0.3` (`pip show xwmt`).
 - **`OSError: no files to open`** — the requested date range is outside the catalog's coverage
@@ -198,11 +205,11 @@ Common issues:
 
 ## References
 
-- MDTF-diagnostics docs: <https://mdtf-diagnostics.readthedocs.io/>
-- Git setup guide: <https://mdtf-diagnostics.readthedocs.io/en/main/sphinx/dev_git_intro.html>
+- MDTF-diagnostics docs: [https://mdtf-diagnostics.readthedocs.io/](https://mdtf-diagnostics.readthedocs.io/)
+- Git setup guide: [https://mdtf-diagnostics.readthedocs.io/en/main/sphinx/dev_git_intro.html](https://mdtf-diagnostics.readthedocs.io/en/main/sphinx/dev_git_intro.html)
 - POD detailed description: `diagnostics/natl_ocean/doc/natl_ocean.rst`
-- ESNB: <https://github.com/jkrasting/esnb>
-- intake-esm: <https://intake-esm.readthedocs.io/>
+- ESNB: [https://github.com/jkrasting/esnb](https://github.com/jkrasting/esnb)
+- intake-esm: [https://intake-esm.readthedocs.io/](https://intake-esm.readthedocs.io/)
 
 ---
 

@@ -1,4 +1,7 @@
 # Import Analysis Tools
+import os
+import json
+from pathlib import Path
 import numpy as np
 import xarray as xr
 import xesmf as xe
@@ -32,6 +35,111 @@ warnings.filterwarnings('ignore')
 
 # Import additional utilities
 import spna_masks
+
+
+##### DATA LOADING (native / non-CMORized) #####
+def load_native_timeslice(catalog_json, varnames, startdate, enddate):
+    """Load native POP (CESM timeslice) files and harmonize to CMIP variables/coords.
+
+    CESM timeslice output is not CMORized: variables carry native POP names (TEMP,
+    SALT, UVEL, ...) on native coords (z_t in cm, TLONG/TLAT, ULONG/ULAT), with native
+    units, and there is no tos. ESNB opens by CMIP variable_id and requires that name
+    to exist in-file, so we bypass it here and harmonize in-memory. Shared by both the
+    ESNB and intake-esm notebooks so the two stay consistent.
+
+    The native<->CMIP mapping is read from the catalog's `native_variable_name` column
+    (data-driven). The resulting `mapping` dict has the same {cmip: native} shape as
+    e.g. `mapping = {"zg": "Z500"}`.
+
+    Harmonization steps (CESM/POP only -- NOT applied to CMORized models):
+      * rename native variable -> CMIP id and native coords -> lon/lat/lev,
+      * normalize units (so g/kg, hfds W m-2, wfo kg m-2 s-1, uo/vo cm/s -> m/s),
+      * recenter POP end-of-interval monthly time stamps to the interval midpoint,
+      * NCAR/POP2 surface-flux recipe (mirrors sub2sub_HR/wmt.py + the OSNAP FOSI
+        recipe): hfds = SHF + QFLUX and wfo = SFWF - QFLUX/(latent_heat_fusion/1e4),
+        where the catalog maps SHF->hfds, QFLUX->hfsifrazil, SFWF->wfo,
+      * derive tos from the surface level of thetao (native output has no SST field).
+
+    Returns a list of single-variable xr.Datasets (one per CMIP variable) that the
+    per-variable dispatch consumes. preprocess_coords / check_depth_units finish
+    coordinate harmonization downstream (nlat/nlon->y/x, lev cm->m).
+    """
+    # POP2 latent heat of fusion (read from CESM FOSI output: 3.337e9 erg/g).
+    # /1e4 converts erg/g -> J/kg, matching the OSNAP NCAR frazil recipe.
+    LATENT_HEAT_FUSION_ERG_PER_G = 3.337e9
+
+    # Resolve the catalog CSV path from the catalog JSON metadata.
+    with open(catalog_json) as f:
+        meta = json.load(f)
+    csv_path = meta['catalog_file']
+    if csv_path.startswith('file://'):
+        csv_path = csv_path[len('file://'):]
+    if not os.path.isabs(csv_path):
+        csv_path = str(Path(catalog_json).parent / csv_path)
+    df = pd.read_csv(csv_path)
+
+    # Build the native<->CMIP mapping from the catalog column:
+    #   mapping = {cmip_variable_id: native_variable_name}, e.g. {"thetao": "TEMP"}
+    mapping = dict(zip(df['variable_id'], df['native_variable_name']))
+    print('mapping (CMIP -> native):', mapping)
+
+    _coord_rename = {'TLONG': 'lon', 'TLAT': 'lat',
+                     'ULONG': 'lon', 'ULAT': 'lat', 'z_t': 'lev'}
+    _unit_attr_fix = {'gram/kilogram': 'g/kg',        # SALT (== psu numerically)
+                      'Watts/meter^2': 'W m-2',       # QFLUX
+                      'watt/m^2': 'W m-2',            # SHF
+                      'kg/m^2/s': 'kg m-2 s-1'}        # SFWF
+
+    # Load every variable in the catalog (includes hfsifrazil, needed by the recipe).
+    by_var = {}
+    for var in mapping:
+        rows = df[df['variable_id'] == var]
+        if rows.empty:
+            continue
+        native = mapping[var]
+        ds = xr.open_dataset(rows.iloc[0]['path'], chunks={'time': 1})  # lazy/dask
+        ds = ds.rename({native: var})                       # native -> CMIP variable name
+        ds = ds.rename({k: v for k, v in _coord_rename.items() if k in ds.variables})
+        # Normalize native POP units to CMIP conventions. Velocities convert
+        # cm/s -> m/s (factor 0.01); the rest are attribute-only fixes (no value change).
+        if var in ('uo', 'vo') and ds[var].attrs.get('units') in ('centimeter/s', 'cm/s'):
+            ds[var] = (ds[var] * 0.01).assign_attrs({**ds[var].attrs, 'units': 'm s-1'})
+        _u = ds[var].attrs.get('units')
+        if _u in _unit_attr_fix:
+            ds[var].attrs['units'] = _unit_attr_fix[_u]
+        # POP stamps monthly time at the END of the averaging interval; recenter to the
+        # interval midpoint (from time_bound) so date-range selection is intuitive.
+        if 'time_bound' in ds.variables:
+            ds = ds.assign_coords(time=ds['time_bound'].mean(ds['time_bound'].dims[-1]))
+        ds = ds.sel(time=slice(startdate, enddate))
+        by_var[var] = ds[[var]]
+
+    # NCAR/POP2 surface-flux recipe (CESM-only; mirrors the OSNAP FOSI NCAR recipe).
+    # hfsifrazil (QFLUX) is the frazil ice-formation heat flux. It is added back to the
+    # net surface heat flux (SHF) to form the CMIP hfds, and converted to an equivalent
+    # freshwater flux (QFLUX / (latent_heat_fusion/1e4), in kg m-2 s-1) that is removed
+    # from the freshwater flux (SFWF) to form wfo.
+    if 'hfsifrazil' in by_var:
+        frazil = by_var['hfsifrazil']['hfsifrazil']
+        if 'hfds' in by_var:
+            hfds = by_var['hfds']['hfds']
+            by_var['hfds']['hfds'] = (hfds + frazil).assign_attrs(hfds.attrs)
+        if 'wfo' in by_var:
+            latfus = LATENT_HEAT_FUSION_ERG_PER_G / 1.0e4   # erg/g -> J/kg
+            wfo = by_var['wfo']['wfo']
+            by_var['wfo']['wfo'] = (wfo - frazil / latfus).assign_attrs(wfo.attrs)
+        del by_var['hfsifrazil']   # consumed by the recipe; not a POD input
+
+    datasets = list(by_var.values())
+
+    # Derive tos (SST) from the surface level of thetao -- native output has no tos.
+    thetao_ds = next((d for d in datasets if 'thetao' in d.data_vars), None)
+    if thetao_ds is not None:
+        tos = thetao_ds['thetao'].isel(lev=0, drop=True).rename('tos').to_dataset()
+        datasets.append(tos)
+
+    return datasets
+
 
 ##### PART 1 PROCESSING  #####
 def preprocess_coords(ds):
@@ -1010,6 +1118,12 @@ def wmt_amoc_plot(ds_wmt_benchmarks, ds_wmt_model, ds_moc, lat_target=45,
     # .sel(method='nearest') may snap to 44.5 or 45.5 on the 1-deg grid.
     moc_at_lat = ds_moc['MOC'].isel(region=1).sel(lat=lat_target, method='nearest').mean('time')
 
+    # Streamfunction type set by calculate_moc: 'Eulerian' (uo/vo) or 'residual'
+    # (umo/vmo). Fall back to a generic label if the attr is missing.
+    sf_type = ds_moc.attrs.get('streamfunction_type',
+                               ds_moc['MOC'].attrs.get('streamfunction_type'))
+    sf_label = f'{sf_type} streamfunction' if sf_type else 'AMOC'
+
     fig, ax = plt.subplots(figsize=(8, 5))
 
     # Obs benchmark spread (gray fill) + mean (black line) -- matches wmt_plot_byregion style
@@ -1023,7 +1137,7 @@ def wmt_amoc_plot(ds_wmt_benchmarks, ds_wmt_model, ds_moc, lat_target=45,
     # Model AMOC at target latitude (blue). ds_moc's coord is named 'sigma' (not
     # 'sigma2'); the values are sigma2 by construction in calculate_moc.
     ax.plot(moc_at_lat.sigma, moc_at_lat, color='blue',
-            label=f'Model AMOC at {lat_target}$^\\circ$N')
+            label=f'Model {sf_label} at {lat_target}$^\\circ$N')
 
     # Limit x-axis to physical sigma2 range (the ds_moc 'sigma' coord includes
     # a 0 anchor from sigma2_grid_96L that would otherwise compress the view).
@@ -1035,7 +1149,7 @@ def wmt_amoc_plot(ds_wmt_benchmarks, ds_wmt_model, ds_moc, lat_target=45,
     ax.grid(color='gray', linewidth=1, linestyle='dashed', alpha=0.5)
     ax.set_xlabel(r'$\sigma_2$ (kg/m$^3$)')
     ax.set_ylabel('Volume flux (Sv)')
-    ax.set_title(f'{region_name}: WMT vs AMOC at {lat_target}$^\\circ$N')
+    ax.set_title(f'{region_name}: WMT vs {sf_label} at {lat_target}$^\\circ$N')
     ax.legend(loc='best')
     plt.tight_layout()
 
@@ -1575,4 +1689,9 @@ def calculate_moc(ds_t, ds_u, ds_v, use_currents=False):
     moc_ds = moc_ds.assign_coords({'time': sigma2_T['time']})
    # moc_ds['time_bnds'] = ds_t['time_bnds']
     moc_ds = moc_ds.chunk(None)
+    # Record which streamfunction this is, so plots label it correctly:
+    # uo/vo (velocity) -> Eulerian; umo/vmo (mass transport) -> residual.
+    sf_type = 'Eulerian' if use_currents else 'residual'
+    moc_ds.attrs['streamfunction_type'] = sf_type
+    moc_ds['MOC'].attrs['streamfunction_type'] = sf_type
     return moc_ds
