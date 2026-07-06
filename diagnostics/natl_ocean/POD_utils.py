@@ -6,7 +6,7 @@ import numpy as np
 import xarray as xr
 import xesmf as xe
 from scipy import stats
-import gsw_xarray as gsw
+import gsw
 from numba import guvectorize
 import cftime
 import xwmt
@@ -182,6 +182,114 @@ def preprocess_coords(ds):
 
     return ds
 
+
+def preprocess_bias_inputs(ds_thetao, ds_so, ds_hfds, ds_fwflux, ds_tos,
+                           ds_areacello, ds_volcello, verbose=False):
+    """
+    Step 1 of the diagnostics: build the bias-path target dataset and the per-cell
+    layer thickness ``dz`` from the per-variable input datasets.
+
+    Merges the T-grid tracers + surface fluxes + fx fields into one dataset, runs it
+    through :func:`preprocess_coords` (POP dim renames, depth-unit fixes), rechunks
+    for the density/MLD ufuncs, and derives ``dz = volcello / areacello`` (converting
+    ``lev`` from cm to m when needed). Velocity vars (uo/vo, on the U-grid) are
+    deliberately excluded — they conflict with the tracers on lat/lon coord values.
+
+    Parameters
+    ----------
+    ds_thetao, ds_so, ds_hfds, ds_fwflux, ds_tos, ds_areacello, ds_volcello : xarray.Dataset
+        Single-variable datasets: T-grid tracers, surface fluxes, and fx fields.
+    verbose : bool, optional
+        If True, print the resulting dims and a ``dz`` sanity check.
+
+    Returns
+    -------
+    ds_target : xarray.Dataset
+        Merged, coord-preprocessed, rechunked target for the bias diagnostics.
+    dz : xarray.DataArray
+        Per-cell layer thickness with ``lev`` in meters.
+    """
+    # Merge tracers + surface fluxes + fx into one dataset for the bias path.
+    ds_bias = xr.merge(
+        [ds_thetao, ds_so, ds_hfds, ds_fwflux, ds_tos, ds_areacello, ds_volcello],
+        join='outer',
+    )
+    # Rename POP-style dims (nlat/nlon -> y/x) + fix depth units.
+    ds_target = preprocess_coords(ds_bias)
+    # Load object-dtype bounds vars (e.g. cftime time_bnds) into memory before
+    # chunking: a partial .chunk() dict crashes on dask-backed cftime vars
+    # ('zip() argument 2 is longer than argument 1'). No-op when none are present.
+    for _v in list(ds_target.variables):
+        if ds_target[_v].dtype == object and ds_target[_v].chunks is not None:
+            ds_target[_v] = ds_target[_v].load()
+    # Unify chunks so the compute_sigma0/compute_mld ufuncs see consistent chunks.
+    ds_target = ds_target.unify_chunks().chunk({'lev': -1})
+
+    # dz = per-cell layer thickness from volcello / areacello. CESM POP fx report
+    # lev in cm; convert to m (guard on the values so it is robust across sources).
+    dz = ds_volcello['volcello'] / ds_areacello['areacello']
+    if 'lev' not in dz.coords:
+        dz = dz.assign_coords(lev=ds_volcello['lev'])
+    if float(dz.lev.max()) > 8000:
+        dz = dz.assign_coords(lev=dz.lev / 100.0)
+
+    if verbose:
+        print('dz dims:', dict(dz.sizes))
+        print('ds_target dims:', dict(ds_target.sizes))
+        # dz should be a real, spatially-varying 3D field (not one column reused
+        # everywhere): a land/shallow corner has far fewer "wet" (thickness > 0)
+        # levels than a mid-ocean cell. corner << mid-ocean confirms dz follows the
+        # bathymetry, so the AMOC volume weighting uses each cell's true thickness
+        # (a single-column dz made AMOC ~3x too low).
+        nz = dz.sizes['lev']
+        corner = int((dz[:, 0, 0] > 0).sum())
+        deep = int((dz[:, dz.sizes['nlat'] // 2, dz.sizes['nlon'] // 2] > 0).sum())
+        print(f'dz sanity — corner [0,0]: {corner}/{nz} levels nonzero | mid-ocean: {deep}/{nz}')
+
+    return ds_target, dz
+
+
+def regrid_and_climatology(ds_target, opts, model_name, verbose=False):
+    """
+    Steps 4-5 of the diagnostics: regrid the (zavg) bias fields to a regular
+    lat-lon grid, then reduce to a monthly climatology tagged with the model name.
+
+    This is the plot-ready input for :func:`SpatialPlot_climo_bias` — regridded to
+    ``opts['regrid_dlon']`` x ``opts['regrid_dlat']`` (method ``opts['regrid_method']``),
+    averaged into 12 monthly means, tagged with a ``model`` coordinate, and loaded
+    into memory (the climatology is small and the plotting ufuncs are not dask-aware).
+
+    Parameters
+    ----------
+    ds_target : xarray.Dataset
+        Post-zavg bias fields (native curvilinear grid, full time axis).
+    opts : dict
+        The ``pod_options`` block (uses regrid_dlon/regrid_dlat/regrid_method).
+    model_name : str
+        Label attached as the ``model`` coordinate (e.g. the case name).
+    verbose : bool, optional
+        If True, print the resulting dims and model name.
+
+    Returns
+    -------
+    ds_target : xarray.Dataset
+        Regridded monthly climatology, tagged and loaded, ready for plotting.
+    """
+    ds_target = regrid(ds_target, dlon=opts['regrid_dlon'], dlat=opts['regrid_dlat'],
+                       method=opts['regrid_method'])
+    # Reduce the time axis to a 12-month climatology. Guard on 'time' so the function
+    # is safe to call on data that is already a monthly climatology (idempotent).
+    if 'time' in ds_target.dims:
+        ds_target = ds_target.groupby('time.month').mean('time', keep_attrs=True)
+    ds_target = ds_target.assign_coords({'model': model_name})
+    # Materialize: the climatology is small (12 x 180 x 360) and
+    # SpatialPlot_climo_bias uses xr.apply_ufunc without dask support.
+    ds_target = ds_target.load()
+    if verbose:
+        print('climatology dims:', dict(ds_target.sizes), '| model:', model_name)
+    return ds_target
+
+
 def compute_sigma0(da_t,da_s):
     """
     Compute potential density anomaly (sigma0) from conservative temperature and salinity.
@@ -208,6 +316,9 @@ def compute_sigma0(da_t,da_s):
         else:
             raise Exception("Check units of so!")
     da_sig0 = gsw.density.sigma0(SA=da_s,CT=da_t)
+    # sigma0 is kg/m^3, but plain gsw propagates the input salinity 'units' attr;
+    # set it explicitly so downstream compute_mld's units check passes.
+    da_sig0 = da_sig0.assign_attrs(units='kg/m^3')
     return da_sig0
 
 
@@ -923,7 +1034,7 @@ def calc_wmt(ds, density, dclasses, dsigma):
     ds_wmt = xwmt_init.G(density, bins=bins)
     ds_wmt = ds_wmt.to_dataset(name='wmt')
     ds_wmt_decomp = xwmt_init.G(density, bins=bins, group_tend=False)
-    print(ds_wmt_decomp)
+    #print(ds_wmt_decomp)
     #ds_wmt['heat'] = ds_wmt_decomp['heat']
     #ds_wmt['freshwater'] = ds_wmt_decomp['freshwater']
     return ds_wmt
@@ -961,7 +1072,7 @@ def calc_maps(ds, density, dclasses, dsigma):
    
     temp_array = []
     for dd in vals:
-        print(dd) 
+        #print(dd) 
         trans1 =  xwmt_init.F(density, bins = np.array([dd-dsigma/2, dd+dsigma/2]), group_tend=True)
         temp_array.append(trans1) 
         
@@ -1159,6 +1270,85 @@ def wmt_amoc_plot(ds_wmt_benchmarks, ds_wmt_model, ds_moc, lat_target=45,
 
     return
 
+
+
+def plot_amoc_sigma2(ds_moc, model_name, region=1, sigma_range=(26, 38),
+                     levels=None, save=False, savedir='./', verbose=False):
+    """
+    Plot the Atlantic AMOC streamfunction in sigma2 coordinates (time mean).
+
+    Extracts the Atlantic+Arctic MOC (``region``) from ``ds_moc``, takes the time
+    mean, restricts to the physical sigma2 range, and draws a filled
+    sigma2-vs-latitude contour plot.
+
+    Parameters
+    ----------
+    ds_moc : xarray.Dataset
+        Output of :func:`calculate_moc`, with an ``MOC(region, lat, sigma, time)`` variable.
+    model_name : str
+        Label used in the plot title.
+    region : int, optional
+        MOC region index (default 1 = Atlantic+Arctic per basinmask attrs).
+    sigma_range : tuple of float, optional
+        (min, max) sigma2 to display. The sigma2 grid anchors its lowest edge to 0
+        (a placeholder for "lighter than any physical seawater"); restricting to the
+        physical range keeps the plot from looking empty. Default (26, 38).
+    levels : array-like, optional
+        Contour levels in Sv (default ``np.arange(-30, 31, 2)``).
+    save : bool, optional
+        If True, save the figure under ``savedir``.
+    savedir : str, optional
+        Output directory for the saved figure.
+    verbose : bool, optional
+        If True, print diagnostic ranges and the upper-cell max MOC.
+
+    Returns
+    -------
+    moc_atl : xarray.DataArray
+        The plotted (region-selected, time-mean, sigma-sliced) MOC field.
+    """
+    # region=1 is Atlantic+Arctic per basinmask attrs; take the time mean and force
+    # dim order to (sigma, lat) so contourf gets z.shape == (len(y), len(x)).
+    moc_atl = ds_moc['MOC'].isel(region=region).mean('time').transpose('sigma', 'lat')
+
+    # Streamfunction type recorded by calculate_moc: 'Eulerian' (uo/vo) or
+    # 'residual' (umo/vmo). Used to label the plot correctly.
+    sf_type = ds_moc.attrs.get('streamfunction_type',
+                               ds_moc['MOC'].attrs.get('streamfunction_type'))
+    sf_label = f'{sf_type} streamfunction' if sf_type else 'AMOC'
+
+    # The sigma2 grid anchors its lowest edge to 0; slice to the physical range.
+    moc_atl = moc_atl.sel(sigma=slice(sigma_range[0], sigma_range[1])).compute()
+
+    if verbose:
+        print(f'moc_atl dims:  {dict(moc_atl.sizes)}')
+        print(f'moc_atl range: {float(moc_atl.min()):+.3f} to {float(moc_atl.max()):+.3f} Sv')
+        print(f'sigma range:   {float(moc_atl.sigma.min()):.2f} to {float(moc_atl.sigma.max()):.2f} kg/m^3')
+        print(f'lat range:     {float(moc_atl.lat.min()):.1f} to {float(moc_atl.lat.max()):.1f}')
+        print(f'NaN fraction:  {float(moc_atl.isnull().mean()):.1%}')
+
+    if levels is None:
+        levels = np.arange(-30, 31, 2)  # Sv contours, 2 Sv spacing
+    sig2 = r'$\sigma_2$'
+    fig, ax = plt.subplots(figsize=(9, 5))
+    cf = ax.contourf(moc_atl['lat'], moc_atl['sigma'], moc_atl,
+                     levels=levels, cmap='RdBu_r', extend='both')
+    ax.invert_yaxis()  # heavier water (larger sigma) downward visually
+    ax.set_xlabel('Latitude')
+    ax.set_ylabel(f'{sig2} (kg/m$^3$)')
+    ax.set_title(f'Atlantic {sf_label} ({sig2}), time mean — {model_name}')
+    fig.colorbar(cf, ax=ax, label='MOC (Sv)')
+    plt.tight_layout()
+
+    if save:
+        plotname = savedir + '/AMOC_sigma2.{}.png'.format(model_name.replace(" ", "_"))
+        fig.savefig(plotname)
+
+    if verbose:
+        upper_cell_max = float(moc_atl.where(moc_atl['sigma'] < 36.5).max())
+        print(f'Atlantic upper-cell max MOC: {upper_cell_max:.2f} Sv (expect ~10-25 Sv for CESM)')
+
+    return moc_atl
 
 
 def wmt_plot_maps(ds_benchmark, ds_model, dimnames, sigma_classes, save=False, savedir='./'):
