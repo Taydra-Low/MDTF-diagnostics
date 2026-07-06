@@ -30,12 +30,12 @@
    // startdate, enddate: either YYYY-MM-DD, YYYYMMDD:HHMMSS, or YYYY-MM-DD:HHMMSS
    "case_list":
     {
-      "CESM2_historical_r1i1p1f1":
+      "CESM-mdtfv3-timeslice-cmorized_r1i1p1f1":
         {
           "model": "CESM",
           "convention": "CMIP",
-          "startdate": "1980-01-01",
-          "enddate": "1981-12-31"
+          "startdate": "1995-01-01",
+          "enddate": "1995-12-31"
         }
     },
   // PATHS ---------------------------------------------------------------------
@@ -46,8 +46,7 @@
   // Full or relative path to model data ESM-intake catalog header file
 
 //  "DATA_CATALOG": "./diagnostics/example_multicase/esm_catalog_CMIP_synthetic_r1i1p1f1_gr1.json",
-//   "DATA_CATALOG": "./diagnostics/natl_ocean/esm_catalog_CESM_historical_001_v2.json",
-   "DATA_CATALOG": "./diagnostics/natl_ocean/CMIP_CESM_historical_001.json",
+   "DATA_CATALOG": "./diagnostics/natl_ocean/CESM_timeslice_cmorized_001.json",
 
   // Parent directory containing observational data used by individual PODs.
   "OBS_DATA_ROOT": "/glade/work/emaroon/mdtf/inputdata/obs_data",

@@ -88,6 +88,8 @@ exactly what Claude changed.
 Claude Code reads a `CLAUDE.md` file at startup and treats it as standing instructions. This setup
 uses **two tiers**:
 
+Note: This is how I currently havem my Claude set up, but it is ever changing as I learn more about Claude. You can use any setup you would like.
+
 - **Global** `~/CLAUDE.md` — user-wide conventions: the HPC layout and conda gotchas above, a
   response-style preference, a **projects index**, and the truth rules in §4. Applies everywhere.
 - **Per-project** `CLAUDE.md` (e.g. in the repo root / project root) — project-specific layout,
@@ -101,7 +103,7 @@ Two more mechanisms keep sessions oriented:
   that project — so you resume with the prior decisions in view. Because it keys off the launch
   directory, launch Claude from the project you intend to work in.
 - **Project-switch slash commands.** For moving between projects in one workspace, small global
-  slash commands (`/mdtf`, `/osnap`, `/wmt`) load the right project's newest notes on demand — type
+  slash commands (e.g, `/mdtf`) load the right project's newest notes on demand — type
   the command and Claude reads that project's `notes/` before continuing.
 - **Persistent memory.** Claude keeps a small file-based memory per project (under
   `~/.claude/projects/.../memory/`) for durable facts that aren't in the code or git history. It is
@@ -156,6 +158,7 @@ Output:    what a good result looks like
 Fill **Resources** with real paths — the more specific, the less Claude has to guess.
 
 ### 5.1 — CMORize the native timeslice on a compute node
+
 ```
 Role:      An HPC-aware Python developer working on the MDTF natl_ocean POD.
 Resources: diagnostics/natl_ocean/cmorize_timeslice.py; diagnostics/natl_ocean/POD_utils.py
@@ -170,6 +173,7 @@ Output:    A --dry-run that passes on the login node, then a qsub job script; af
 ```
 
 ### 5.2 — Review the POD for MDTF publish-readiness
+
 ```
 Role:      An MDTF POD reviewer.
 Resources: doc/sphinx/pod_requirements.rst, pod_settings.rst, dev_guidelines.rst,
@@ -182,6 +186,7 @@ Output:    A checklist of concrete fixes with file:line references; no edits yet
 ```
 
 ### 5.3 — Add a data source to the notebook without hardcoding paths
+
 ```
 Role:      A notebook developer for the natl_ocean POD.
 Resources: diagnostics/natl_ocean/natl_ocean_esnb.ipynb (Section 1 case_info/DATA_CATALOG pattern);
@@ -192,20 +197,28 @@ Context:   Do NOT hardcode file paths in cells — the catalog carries them. Kee
 Output:    A minimal cell diff that adds the branch; a note on which catalog/vars it needs.
 ```
 
-### 5.4 — Set up a brand-new POD from scratch (no existing POD code)
+### 5.4 — Set up a POD from already-developed code (not yet in POD format)
+
 ```
-Role:      An MDTF POD author starting from nothing.
+Role:      An MDTF POD author adapting already-developed analysis code into a POD.
 Resources: doc/sphinx/pod_requirements.rst and pod_settings.rst; the example_multicase and
-           example_notebook PODs as templates; ref_catalogs.rst.
-Task:      Scaffold a new POD named <short_name> under diagnostics/<short_name>/.
-Context:   Follow MDTF conventions: the driver, HTML template, and settings.jsonc are named after
-           the POD short name; a doc .rst goes under the POD's doc/ dir. Nothing science-specific
-           yet — just a correct, runnable skeleton.
+           example_notebook PODs as templates; ref_catalogs.rst; the existing analysis code
+           (scripts / functions / notebook) that already computes the science but isn't yet
+           organized in MDTF POD format.
+Task:      Scaffold a new POD named <short_name> under diagnostics/<short_name>/, wrapping the
+           existing code into MDTF's expected structure.
+Context:   The science already works — the POD is being developed from this already-developed code,
+           which just isn't in POD format yet. Reuse the existing functions rather than rewriting
+           them. Follow MDTF conventions: the driver, HTML template, and settings.jsonc are named
+           after the POD short name; a doc .rst goes under the POD's doc/ dir; load data through a
+           catalog, not hardcoded paths.
 Output:    diagnostics/<short_name>/ with <short_name>.py (or .ipynb), settings.jsonc, <short_name>.html,
-           doc/<short_name>.rst — each matching the example POD's structure, with TODO markers.
+           doc/<short_name>.rst — each matching the example POD's structure, with the existing code
+           wired in and TODO markers where framework glue is still needed.
 ```
 
 ### 5.5 — Convert an existing `.py` POD into notebook format
+
 ```
 Role:      A notebook developer converting a driver-script POD to a demonstrable notebook.
 Resources: the example_notebook POD (the canonical notebook template); this POD's
@@ -221,6 +234,7 @@ Output:    A section-structured notebook that reproduces the driver's outputs; a
 ```
 
 ### 5.6 — Finalize / clean before a PR
+
 ```
 Role:      A careful reviewer preparing a branch to push.
 Resources: git diff of the feature branch; ~/CLAUDE.md (git rules); the notebooks + guides in

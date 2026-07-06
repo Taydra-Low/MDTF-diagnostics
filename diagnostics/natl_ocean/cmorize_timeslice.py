@@ -9,8 +9,14 @@ CMIP variable name in-file, so native files can't be used directly. POD_utils.
 load_native_timeslice() already performs the full native->CMIP harmonization in-memory
 (rename, unit fixes, time recenter, the NCAR/POP2 frazil recipe for hfds/wfo, deriving
 tos). This script runs that harmonizer over a chosen window, applies light CF finishing,
-writes the result as CMIP-named NetCDF, copies the matching fx files, and builds an
-intake-esm catalog. The written bundle then loads through ESNB like a CMORized model.
+writes the result as CMIP-named NetCDF, and builds an intake-esm catalog. The written
+bundle then loads through ESNB like a CMORized model.
+
+fx (areacello/volcello) are NOT written by default: the timeslice files carry no grid
+geometry, so those come from the CESM2 gx1 Ofx grid, which only lives on NCAR glade. Grab
+areacello/volcello from the shared Google Drive folder instead and add two rows (variable_id,
+path, table_id=Ofx) to the generated catalog CSV. On NCAR you can still copy them in-place
+with --copy-fx (reads the glade Ofx path).
 
 Grid convention: native POP already uses nlat/nlon dims with 2D lon/lat coords, which
 matches CESM2's real CMIP6 files (CESM2 ships nlat/nlon, a deviation from the canonical
@@ -52,8 +58,9 @@ CMIP_META = {
 }
 WRITE_ORDER = ("thetao", "so", "uo", "vo", "hfds", "wfo", "tos")
 
-# fx files (CESM2 gx1 Ofx; the timeslice gx1 grid matches). Copied into the bundle
-# so it is self-contained. Relative to FX_DIR.
+# fx files (CESM2 gx1 Ofx; the timeslice gx1 grid matches). Only copied when --copy-fx is
+# passed (NCAR glade only); otherwise the user supplies area/volume from Google Drive.
+# Relative to FX_DIR.
 FX_FILES = {
     "areacello": "areacello/gn/v20190308/areacello_Ofx_CESM2_historical_r1i1p1f1_gn.nc",
     "volcello":  "volcello/gn/v20190308/volcello_Ofx_CESM2_historical_r1i1p1f1_gn.nc",
@@ -160,7 +167,9 @@ def main():
     ap.add_argument("--start", default="1995-01-01")
     ap.add_argument("--end",   default="1995-12-31")
     ap.add_argument("--fx-dir", default=FX_DIR_DEFAULT)
-    ap.add_argument("--no-fx", action="store_true", help="do not copy fx (areacello/volcello) into the bundle")
+    ap.add_argument("--copy-fx", action="store_true",
+                    help="copy fx (areacello/volcello) from the glade CESM2 Ofx grid into the bundle "
+                         "(NCAR only); default is to NOT include fx — supply them from Google Drive")
     ap.add_argument("--no-compress", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -208,7 +217,7 @@ def main():
         rows.append({"variable_id": var, "path": p, "table_id": "Omon", "time_range": tr})
         print(f"    -> {os.path.basename(p)} ({os.path.getsize(p)/1e9:.2f} GB)")
 
-    if not args.no_fx:
+    if args.copy_fx:
         fxbase = Path(args.fx_dir)
         for var, rel in FX_FILES.items():
             src = fxbase / rel
@@ -219,6 +228,11 @@ def main():
                 print(f"    fx -> {dst.name} ({os.path.getsize(dst)/1e6:.1f} MB)")
             else:
                 print(f"    fx MISSING: {src} (skipped)")
+    else:
+        print("    fx (areacello/volcello) NOT included (default). Download them from the shared")
+        print(f"    Google Drive folder and add two rows to {outdir / 'CESM_timeslice_cmorized_001.csv'}:")
+        print("      variable_id=areacello, table_id=Ofx, path=<your areacello .nc>")
+        print("      variable_id=volcello,  table_id=Ofx, path=<your volcello .nc>")
 
     csv_path, json_path = build_catalog(rows, native_csv, outdir)
     total = sum(os.path.getsize(r["path"]) for r in rows) / 1e9
