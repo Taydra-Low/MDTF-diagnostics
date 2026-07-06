@@ -5,6 +5,10 @@ Step-by-step instructions for running the `natl_ocean` POD notebook
 framework. The notebook lives on the MDTF **notebook-development branch**
 (`dev-notebook-transistions`), not `main`.
 
+> **Developing with Claude?** For how this POD was built with Claude Code on NCAR HPC — the CLAUDE.md
+> setup, HPC/compute-node conventions, anti-hallucination rules, and a reusable prompt library — see
+> the companion [`claude_workflow_guide.md`](./claude_workflow_guide.md).
+
 ---
 
 ## Overview
@@ -203,8 +207,7 @@ time range).** Do this if you want more than one year.
 
 The catalog files in `diagnostics/natl_ocean/` store **absolute** paths:
 
-- the `path` column in `CESM_timeslice_cmorized_001.csv` (and the native
-  `CESM_timeslice_ocean_monthly_001.csv` if you use `timeslice_native`)
+- the `path` column in `CESM_timeslice_cmorized_001.csv`
 - the `catalog_file` field in the matching `.json`
 
 After copying the model data locally, edit those `path` entries to point at your local copies
@@ -224,7 +227,7 @@ launching Jupyter (the cell uses `setdefault`, so exported values win):
 | `CODE_ROOT`   | your`MDTF-diagnostics` repo directory                     |
 | `WORK_DIR`    | output / work directory (created if missing)                |
 | `OBS_DATA`    | the reference/obs directory from Step 3a                    |
-| `FX_DIR`      | fx grid dir — **not needed** for `timeslice_cmorized` (the bundle carries its own fx); only used by the CESM2 sources / `timeslice_native` |
+| `FX_DIR`      | fx grid dir — **not needed** by the notebook (the CMORized bundle carries its own fx); only used by `cmorize_timeslice.py` when building the bundle (Step 3, Option B) |
 | `PBS_ACCOUNT` | your PBS account (only used if you enable the dask cluster) |
 
 ---
@@ -237,8 +240,8 @@ launching Jupyter (the cell uses `setdefault`, so exported values win):
    - **Locally**: `conda activate esnb && jupyter lab`
 2. Open `diagnostics/natl_ocean/natl_ocean_esnb.ipynb` and select the **`Python (esnb)`**
    kernel (top-right kernel selector).
-3. In Section 1, set `data_source` — `"timeslice_cmorized"` (default; loaded through ESNB) or
-   `"timeslice_native"` (in-memory bypass) — and the date range. For a first test, use one year:
+3. In Section 1, the data source is `data_source = "timeslice_cmorized"` (loaded through ESNB).
+   Set the date range; for a first test, use one year:
    `startdate, enddate = '1995-01-01', '1995-12-31'` (the timeslice data covers 1995–2015).
 4. Run Section 1 → Section 2 (data load), then the diagnostics and plotting sections in order.
 
