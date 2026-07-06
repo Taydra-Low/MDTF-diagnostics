@@ -1,7 +1,7 @@
 # North Atlantic Ocean POD: ESNB Notebook — Setup & User Guide
 
 Step-by-step instructions for running the `natl_ocean` POD notebook
-(`example_notebooks/mdtf.natl_ocean.esnb.ipynb`) from scratch, for someone new to the MDTF
+(`diagnostics/natl_ocean/natl_ocean_esnb.ipynb`) from scratch, for someone new to the MDTF
 framework. The notebook lives on the MDTF **notebook-development branch**
 (`dev-notebook-transistions`), not `main`.
 
@@ -27,7 +27,7 @@ data source (`data_source = "timeslice_cmorized"`, Section 1): a CMORized copy o
 (`cesm_mdtfv3`) timeslice run — CMIP-named local NetCDF (`thetao`, `so`, `uo`, `vo`, `tos`, `hfds`,
 `wfo`, plus fx `areacello`/`volcello`), ~0.5 GB. It loads **through ESNB**
 (`NotebookDiagnostic → CaseGroup2 → open`) like a CMIP model, and the **same files also load through
-the companion intake-esm notebook** (`mdtf.natl_ocean.intake_esm.ipynb`).
+the companion intake-esm notebook** (`natl_ocean_intake_esm.ipynb`).
 
 > **On NCAR HPC?** You can point at the local CMORized dataset and use **longer time periods** (the
 > timeslice record covers 1995–2015) — see [Step 3](#step-3--get-the-data). Obs, input, and a
@@ -96,7 +96,7 @@ git checkout -b dev-notebook-transistions upstream/dev-notebook-transistions
 The notebook is then at:
 
 ```
-example_notebooks/mdtf.natl_ocean.esnb.ipynb
+diagnostics/natl_ocean/natl_ocean_esnb.ipynb
 ```
 
 > Note: `dev-notebook-transistions` is the literal branch name on the remote (it contains a
@@ -235,7 +235,7 @@ launching Jupyter (the cell uses `setdefault`, so exported values win):
    - **On Casper**: use JupyterHub ([https://jupyterhub.hpc.ucar.edu](https://jupyterhub.hpc.ucar.edu)) or a `qvscode`
      interactive session; a 1-year run is small enough to run single-process (no dask).
    - **Locally**: `conda activate esnb && jupyter lab`
-2. Open `example_notebooks/mdtf.natl_ocean.esnb.ipynb` and select the **`Python (esnb)`**
+2. Open `diagnostics/natl_ocean/natl_ocean_esnb.ipynb` and select the **`Python (esnb)`**
    kernel (top-right kernel selector).
 3. In Section 1, set `data_source` — `"timeslice_cmorized"` (default; loaded through ESNB) or
    `"timeslice_native"` (in-memory bypass) — and the date range. For a first test, use one year:
